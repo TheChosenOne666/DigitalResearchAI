@@ -1,0 +1,606 @@
+
+/* ============================================================
+   v3 用户端增强 JS
+   顶部导航 · AI智搜一页对话 · 知识库问答 · 个人中心渲染
+   在 app.js 与旧内联脚本之后加载，函数声明覆盖旧实现
+   ============================================================ */
+
+/* ---------- 顶部导航 ---------- */
+function setTopNav(id){
+  document.querySelectorAll('#topnav .tn-item').forEach(function(el){ el.classList.remove('active'); });
+  document.querySelectorAll('#topnav .tn-item[data-tn]').forEach(function(el){
+    if(el.getAttribute('data-tn') === id) el.classList.add('active');
+  });
+  var groupMap = {
+    'kb-priority':'tnKbDrop','kb-achievements':'tnKbDrop','kb-ingest':'tnKbDrop','kb-manage':'tnKbDrop',
+    'my-data':'tnPcDrop','my-reports':'tnPcDrop','upload':'tnPcDrop','pay':'tnPcDrop','billing':'tnPcDrop'
+  };
+  var dropId = groupMap[id];
+  if(dropId){
+    var drop = document.getElementById(dropId);
+    if(drop){
+      var trigger = drop.querySelector('.tn-item');
+      if(trigger) trigger.classList.add('active');
+    }
+  }
+  document.querySelectorAll('#topnav .tn-drop.open').forEach(function(x){ x.classList.remove('open'); });
+}
+function toggleTNDrop(el){
+  var drop = el.closest('.tn-drop');
+  if(!drop) return;
+  var open = drop.classList.contains('open');
+  document.querySelectorAll('#topnav .tn-drop.open').forEach(function(x){ x.classList.remove('open'); });
+  if(!open) drop.classList.add('open');
+}
+document.addEventListener('click', function(e){
+  if(!e.target.closest('#topnav .tn-drop')) document.querySelectorAll('#topnav .tn-drop.open').forEach(function(x){ x.classList.remove('open'); });
+});
+
+/* ---------- 通知抽屉 ---------- */
+function toggleNotif(){
+  var m = document.getElementById('notifMask');
+  var d = document.getElementById('notifDrawer');
+  if(!m || !d) return;
+  var show = !d.classList.contains('show');
+  m.classList.toggle('show', show);
+  d.classList.toggle('show', show);
+}
+
+/* ---------- renderNavbar 覆写：同时渲染旧顶栏与新顶部导航 ---------- */
+function renderNavbar(end){
+  var u = SESSION.user;
+  var admin = end === 'admin';
+  var holder = document.getElementById('navUser');
+  if(holder){
+    if(!u){ holder.innerHTML = ''; }
+    else {
+      var extra = '';
+      if(admin){
+        extra += '<button class="icon-btn nav-bell" title="消息" onclick="toast(\'暂无未读消息\')"><svg width="18" height="18"><use href="#i-bell"></use></svg><span class="dot"></span></button>';
+        extra += '<button class="icon-btn" title="全屏" onclick="toggleFullscreen()"><svg width="18" height="18"><use href="#i-full"></use></svg></button>';
+      }
+      var pc = admin ? 'admin-users' : 'my-data';
+      var log = admin ? '<button onclick="event.stopPropagation();go(\'admin-audit\')"><svg width="14" height="14"><use href="#i-doc"></use></svg>操作日志</button>' : '';
+      holder.innerHTML = extra +
+        '<div class="nav-user" onclick="toggleUserDrop(this)">' +
+          '<span class="avatar">' + u.name.charAt(0) + '</span>' +
+          '<span><span class="nu-name">' + u.name + '</span><br><span class="nu-role">' + u.role + ' · ' + (admin ? '管理端' : '用户端') + '</span></span>' +
+          '<svg class="nu-chev" width="12" height="12"><use href="#i-chevron"></use></svg>' +
+          '<div class="nav-drop">' +
+            '<div class="nd-head"><b>' + u.name + '</b><span>' + u.account + ' · ' + u.role + '</span></div>' +
+            '<button onclick="event.stopPropagation();go(\'' + pc + '\')"><svg width="14" height="14"><use href="#i-user"></use></svg>个人中心</button>' +
+            '<button onclick="event.stopPropagation();editProfile()"><svg width="14" height="14"><use href="#i-settings"></use></svg>修改个人信息</button>' +
+            log +
+            '<button class="danger" onclick="event.stopPropagation();doLogout()"><svg width="14" height="14"><use href="#i-logout"></use></svg>退出登录</button>' +
+          '</div>' +
+        '</div>';
+    }
+  }
+  var tn = document.getElementById('tnUser');
+  if(tn){
+    if(!u || admin){ tn.innerHTML = ''; }
+    else {
+      tn.innerHTML = '<div class="nav-user" onclick="toggleUserDrop(this)">' +
+        '<span class="avatar">' + u.name.charAt(0) + '</span>' +
+        '<span><span class="nu-name">' + u.name + '</span><br><span class="nu-role">' + u.role + ' · 用户端</span></span>' +
+        '<svg class="nu-chev" width="12" height="12"><use href="#i-chevron"></use></svg>' +
+        '<div class="nav-drop">' +
+          '<div class="nd-head"><b>' + u.name + '</b><span>' + u.account + ' · ' + u.role + '</span></div>' +
+          '<button onclick="event.stopPropagation();go(\'my-data\')"><svg width="14" height="14"><use href="#i-user"></use></svg>个人中心</button>' +
+          '<button onclick="event.stopPropagation();editProfile()"><svg width="14" height="14"><use href="#i-settings"></use></svg>修改个人信息</button>' +
+          '<button class="danger" onclick="event.stopPropagation();doLogout()"><svg width="14" height="14"><use href="#i-logout"></use></svg>退出登录</button>' +
+        '</div>' +
+      '</div>';
+    }
+  }
+}
+
+/* ---------- showView 钩子：切换视图后高亮顶部导航 ---------- */
+(function(){
+  var __origShowView = window.showView;
+  window.showView = function(id){
+    var r = (typeof __origShowView === 'function') ? __origShowView(id) : undefined;
+    setTopNav(id);
+    return r;
+  };
+})();
+
+/* ---------- 首页渲染（v3） ---------- */
+function rHome(){
+  var hot = document.getElementById('v3-hot');
+  if(hot){
+    var rows = DB.datasets.filter(function(d){ return d.status === '已上架'; }).slice(0, 5);
+    hot.innerHTML = rows.map(function(d, i){
+      return '<div class="v3-rank"><span class="no' + (i < 3 ? ' top' : '') + '">' + (i + 1) + '</span>' +
+        '<div class="rm"><b>' + esc(d.name) + '</b><small>' + esc(d.cat) + ' · ' + esc(d.src) + ' · ' + esc(d.sub || '') + '</small></div>' +
+        '<span class="heat">' + (9.8 - i) + 'k 热度</span>' +
+        '<span class="link" onclick="go(\'smart-search\')">去检索</span></div>';
+    }).join('');
+  }
+  var latest = document.getElementById('v3-latest');
+  if(latest){
+    latest.innerHTML = DB.datasets.map(function(d){
+      return '<div class="v3-item"><div style="flex:1;min-width:0"><b>' + esc(d.name) + '</b><small>' + esc(d.cat || '') + ' · ' + esc(d.src || '') + ' · ' + esc(d.sub || '') + ' · ' + (d.rows || 0) + ' 行</small></div>' + st(d.status) + '</div>';
+    }).join('');
+  }
+  var an = document.getElementById('v3-notices');
+  if(an){
+    var pubs = DB.notices.filter(function(n){ return n.status === '已发布'; });
+    an.innerHTML = pubs.length ? pubs.map(function(n){
+      return '<div class="v3-item"><div style="flex:1;min-width:0"><b>📢 ' + esc(n.title) + '</b><small>' + esc(n.time) + ' · 范围：' + esc(n.scope) + '</small></div></div>';
+    }).join('') : '<div class="small muted" style="padding:10px 4px">暂无公告</div>';
+  }
+}
+
+/* ---------- AI智搜 一页对话 ---------- */
+function rSmartSearch(){ /* 视图内容为静态对话，无需额外渲染 */ }
+
+var chatGenerating = false;
+var chatStopFlag = false;
+var chatTimers = [];
+
+function sendQuick(q){
+  var inp = document.getElementById('chatInput');
+  if(inp) inp.value = q;
+  sendChat();
+}
+function sendChat(){
+  var inp = document.getElementById('chatInput');
+  var q = (inp ? inp.value : '').trim();
+  if(!q){ toast('请输入研究问题', 'warning'); return; }
+  if(chatGenerating){ stopChat(); return; }
+  var welcome = document.getElementById('chatWelcome');
+  if(welcome) welcome.style.display = 'none';
+  var msgs = document.getElementById('chatMsgs');
+  if(!msgs) return;
+  var me = (SESSION.user && SESSION.user.name) ? SESSION.user.name.charAt(0) : '我';
+  var userDiv = document.createElement('div');
+  userDiv.className = 'msg user';
+  userDiv.innerHTML = '<div class="msg-avatar">' + esc(me) + '</div><div class="msg-body"><div class="user-bubble">' + esc(q) + '</div></div>';
+  msgs.appendChild(userDiv);
+  if(inp) inp.value = '';
+  var flowId = 'flow' + Date.now();
+  var aiDiv = document.createElement('div');
+  aiDiv.className = 'msg';
+  aiDiv.innerHTML = '<div class="msg-avatar">AI</div><div class="msg-body"><div class="flow-card" id="' + flowId + '"></div></div>';
+  msgs.appendChild(aiDiv);
+  scrollChat();
+  chatGenerating = true;
+  chatStopFlag = false;
+  syncChatBtn();
+  runFlow(flowId, q, function(){
+    var fc = document.getElementById(flowId);
+    if(fc){
+      var wrap = fc.closest('.msg-body');
+      if(wrap) wrap.innerHTML = buildReport(q);
+    }
+    chatGenerating = false;
+    syncChatBtn();
+    scrollChat();
+    toast('报告已生成');
+  });
+}
+function syncChatBtn(){
+  var btn = document.getElementById('chatSendBtn');
+  if(!btn) return;
+  var span = btn.querySelector('span');
+  if(span) span.textContent = chatGenerating ? '停止' : '发送';
+  btn.classList.toggle('stop', chatGenerating);
+}
+function stopChat(){
+  chatStopFlag = true;
+  chatTimers.forEach(function(t){ clearTimeout(t); });
+  chatTimers = [];
+  chatGenerating = false;
+  syncChatBtn();
+  toast('已停止生成，保留当前进度');
+}
+function runFlow(flowId, q, done){
+  var stages = ['意图解析', '多源检索', '数据标准化', '智能分析', '报告撰写'];
+  var descs = {
+    '意图解析': '正在理解研究问题与指标范围',
+    '多源检索': '正在检索世界银行 / 国家统计局 / 本地知识库',
+    '数据标准化': '正在对齐 22 列统一数据目录与时间口径',
+    '智能分析': '正在计算增长率、同比与趋势',
+    '报告撰写': '正在生成研究报告并校验引用来源'
+  };
+  var fc = document.getElementById(flowId);
+  if(!fc) return;
+  fc.innerHTML = '<div class="flow-title"><svg width="16" height="16"><use href="#i-sparkles"></use></svg>AI 正在处理<span class="fc-summary"></span></div><div class="flow-stages"></div>';
+  var st = fc.querySelector('.flow-stages');
+  var summary = fc.querySelector('.fc-summary');
+  var cur = 0;
+  function renderStage(){
+    if(!st) return;
+    st.innerHTML = stages.map(function(s, i){
+      var cls = i < cur ? 'done' : (i === cur ? 'active' : 'todo');
+      var ico = i < cur ? '✓' : (i === cur ? '' : (i + 1));
+      return '<div class="fs-item ' + cls + '"><span class="fs-ico">' + ico + '</span><span class="fs-name">' + s + '</span><span class="fs-desc">' + (i === cur ? descs[s] : '') + '</span></div>';
+    }).join('');
+    if(summary) summary.textContent = '第 ' + Math.min(cur, 5) + ' / 5 步';
+    scrollChat();
+  }
+  renderStage();
+  function next(){
+    if(chatStopFlag){ chatGenerating = false; syncChatBtn(); return; }
+    cur++;
+    renderStage();
+    if(cur >= 5){
+      if(summary) summary.textContent = '报告撰写完成';
+      chatTimers.push(setTimeout(function(){
+        if(chatStopFlag){ chatGenerating = false; syncChatBtn(); return; }
+        done();
+      }, 600));
+    } else {
+      chatTimers.push(setTimeout(next, 850));
+    }
+  }
+  chatTimers.push(setTimeout(next, 900));
+}
+function scrollChat(){
+  var body = document.getElementById('chatBody');
+  if(body) body.scrollTop = body.scrollHeight;
+}
+function attachFile(input){
+  var f = input && input.files && input.files[0];
+  var box = document.getElementById('ciFile');
+  var name = document.getElementById('ciFileName');
+  if(!f) return;
+  if(!/\.(xlsx|xls|csv)$/i.test(f.name)){
+    toast('仅支持 Excel / CSV 附件', 'danger');
+    input.value = '';
+    return;
+  }
+  if(f.size > 20 * 1024 * 1024){ toast('附件不能超过 20MB', 'danger'); input.value = ''; return; }
+  if(name) name.textContent = f.name + '（' + (f.size / 1024 / 1024).toFixed(2) + ' MB）';
+  if(box) box.hidden = false;
+}
+function removeAttach(){
+  var box = document.getElementById('ciFile');
+  var file = document.getElementById('chatFile');
+  if(box) box.hidden = true;
+  if(file) file.value = '';
+  toast('已移除附件');
+}
+function loadHistory(v){
+  if(!v){ toast('已新建会话'); return; }
+  var welcome = document.getElementById('chatWelcome');
+  if(welcome) welcome.style.display = 'none';
+  var msgs = document.getElementById('chatMsgs');
+  if(msgs && msgs.children.length === 0){
+    var d = document.createElement('div');
+    d.className = 'msg';
+    d.innerHTML = '<div class="msg-avatar">AI</div><div class="msg-body"><div class="ai-bubble"><div class="ai-text">已加载历史会话「' + esc(v) + '」。你可以继续提问，或点击「重新生成」获取新报告。</div></div></div>';
+    msgs.appendChild(d);
+  }
+  toast('已加载会话：' + v);
+}
+
+/* ---------- 报告生成 ---------- */
+function buildReport(q){
+  var title = (q && q.length > 26) ? q.slice(0, 26) + '…' : (q || '中美 GDP 增长率对比分析');
+  var rows = DB.analysisRows || [];
+  function pick(country, year){
+    return rows.filter(function(r){ return r.country === country && r.year === year; })[0] || {};
+  }
+  var cn22 = pick('中国', '2022'), cn23 = pick('中国', '2023'), cn24 = pick('中国', '2024');
+  var us22 = pick('美国', '2022'), us23 = pick('美国', '2023'), us24 = pick('美国', '2024');
+  function h(v){ var n = parseFloat(v); if(isNaN(n)) return 10; return Math.max(8, Math.min(95, n * 30)); }
+  var chart = [
+    '<div class="cb"><i style="height:' + h(cn22.rate) + '%"></i><span>2022 中国 ' + (cn22.rate || '—') + '</span></div>',
+    '<div class="cb series2"><i style="height:' + h(us22.rate) + '%"></i><span>2022 美国 ' + (us22.rate || '—') + '</span></div>',
+    '<div class="cb"><i style="height:' + h(cn23.rate) + '%"></i><span>2023 中国 ' + (cn23.rate || '—') + '</span></div>',
+    '<div class="cb series2"><i style="height:' + h(us23.rate) + '%"></i><span>2023 美国 ' + (us23.rate || '—') + '</span></div>',
+    '<div class="cb"><i style="height:' + h(cn24.rate) + '%"></i><span>2024 中国 ' + (cn24.rate || '—') + '</span></div>',
+    '<div class="cb series2"><i style="height:' + h(us24.rate) + '%"></i><span>2024 美国 ' + (us24.rate || '—') + '</span></div>'
+  ].join('');
+  var table = rows.map(function(r){
+    return '<tr><td>' + esc(r.year) + '</td><td>' + esc(r.country) + '</td><td>' + esc(r.value) + (r.country === '中国' ? ' 亿元' : ' 十亿美元') + '</td><td>' + esc(r.rate) + '</td><td>' + esc(r.source) + '</td></tr>';
+  }).join('');
+  var now = nowStr();
+  return '<div class="report">' +
+    '<h3>《' + esc(title) + '》</h3>' +
+    '<div class="r-meta">AI数智研究平台 · 智能体「行业研究报告助手」 · 生成于 ' + now + ' · 数据来源：世界银行 WDI / 国家统计局 / 本地知识库</div>' +
+    '<h4>一、研究概述</h4>' +
+    '<p>本报告围绕「' + esc(q || '中美 GDP 增长率对比') + '」展开，基于世界银行 WDI 与国家统计局数据完成多源检索、标准化与智能分析。<span class="cite-sup" onclick="toast(\'引用：世界银行 WDI 指标手册.pdf\')">[1]</span> 2024 年中国 GDP 同比增长 <b>5.0%</b>，美国同比增长 <b>2.9%</b>，中国增速保持领先。<span class="cite-sup" onclick="toast(\'引用：国家统计局 2024 年国民经济统计公报\')">[2]</span></p>' +
+    '<div class="r-kpis">' +
+      '<div class="r-kpi"><div class="k">2024 中国 GDP</div><div class="v">' + esc(cn24.value || '—') + ' 亿</div><div class="d">↑ ' + esc(cn24.rate || '—') + '</div></div>' +
+      '<div class="r-kpi"><div class="k">2024 美国 GDP</div><div class="v">' + esc(us24.value || '—') + ' 十亿</div><div class="d">↑ ' + esc(us24.rate || '—') + '</div></div>' +
+      '<div class="r-kpi"><div class="k">中国增速</div><div class="v">' + esc(cn24.rate || '—') + '</div><div class="d">较 2023 年 ' + (parseFloat(cn24.rate) > parseFloat(cn23.rate) ? '提升' : '回落') + '</div></div>' +
+      '<div class="r-kpi"><div class="k">美国增速</div><div class="v">' + esc(us24.rate || '—') + '</div><div class="d">较 2023 年 ' + (parseFloat(us24.rate) > parseFloat(us23.rate) ? '提升' : '回落') + '</div></div>' +
+    '</div>' +
+    '<h4>二、数据展示</h4>' +
+    '<p>2022-2024 年中美 GDP 增速对比：</p>' +
+    '<div class="chart-bar">' + chart + '</div>' +
+    '<table class="r-table"><thead><tr><th>年份</th><th>国家</th><th>GDP</th><th>增速</th><th>数据来源</th></tr></thead><tbody>' + table + '</tbody></table>' +
+    '<h4>三、结论与建议</h4>' +
+    '<ul>' +
+      '<li>中国 GDP 增速（5.0%）高于美国（2.9%），但基数差异明显，建议结合人均指标综合研判。</li>' +
+      '<li>2022-2024 年中国增速呈「3.0% → 5.2% → 5.0%」波动，2023 年基数效应显著。</li>' +
+      '<li>建议将本报告沉淀至 AI 成果库，并关联原始数据源以便溯源复核。</li>' +
+    '</ul>' +
+    '<div class="r-refs">' +
+      '<div class="ref"><b>[1]</b> 世界银行 WDI 指标手册.pdf（第 3 章 · 检索命中 92%）</div>' +
+      '<div class="ref"><b>[2]</b> 国家统计局 2024 年国民经济统计公报（第 2 节）</div>' +
+      '<div class="ref"><b>[3]</b> WDI 指标字典（22 列数据目录）.xlsx（第 12-18 行）</div>' +
+    '</div>' +
+    '<div class="r-actions">' +
+      '<button class="btn sm" onclick="downloadFile(\'' + esc(title) + '.docx\')">⬇ 导出 Word</button>' +
+      '<button class="btn sm" onclick="downloadFile(\'' + esc(title) + '.pdf\')">⬇ 导出 PDF</button>' +
+      '<button class="btn sm" onclick="downloadFile(\'' + esc(title) + '.pptx\')">⬇ 导出 PPT</button>' +
+      '<button class="btn sm primary" onclick="saveReportToKb()">📥 存入知识库</button>' +
+      '<button class="btn sm" onclick="regenerateReport()">↻ 重新生成</button>' +
+      '<details class="r-adv" style="width:100%"><summary style="cursor:pointer;font-weight:700;color:var(--brand)">高级信息：执行过程与数据溯源</summary>' +
+        '<div style="padding-top:8px;line-height:2">' +
+          '<div>⏱ 执行链路：意图解析 0.4s → 多源检索 1.2s → 数据标准化 0.8s → 智能分析 0.6s → 报告撰写 2.1s</div>' +
+          '<div>📡 数据源：世界银行 WDI（1,284 条）· 国家统计局（896 条）· 本地知识库（42 条）</div>' +
+          '<div>✅ 引用校验：3/3 通过（GB/T 7714-2015）· 全部可溯源</div>' +
+        '</div>' +
+      '</details>' +
+    '</div>' +
+  '</div>';
+}
+function saveReportToKb(){
+  var u = SESSION.user || { name: '我' };
+  var title = '中美GDP增长率对比分析报告';
+  DB.kbEntries.unshift({ id: 'k' + Date.now(), title: title, type: 'Agent 生成', owner: u.name, time: nowStr(), status: '复核中', score: 0.92, scope: '公开' });
+  DB.kbReviewQueue.unshift({ id: 'kq' + Date.now(), title: title, owner: u.name, type: 'Agent 生成', time: nowStr(), status: '待审核' });
+  DB.myReports.unshift({ id: 'mr' + Date.now(), name: title, share: '仅授权用户可见', type: 'Word', ver: 'v1', time: nowStr(), status: '已完成' });
+  toast('已存入 AI 成果库（待复核）并加入我的报告');
+}
+function regenerateReport(){
+  toast('已请求重新生成，请调整问题后再次发送');
+  var inp = document.getElementById('chatInput');
+  if(inp) inp.focus();
+}
+
+/* ---------- 知识库 · 对话问答（chatwiki 风格） ---------- */
+function rKbPriority(){ /* 视图为静态对话，无需额外渲染 */ }
+var kbBusy = false;
+function sendKbChat(){
+  var inp = document.getElementById('kbqInput');
+  var q = (inp ? inp.value : '').trim();
+  if(!q){ toast('请输入问题', 'warning'); return; }
+  if(kbBusy){ toast('正在检索中，请稍候', 'warning'); return; }
+  var chat = document.getElementById('kbqChat');
+  if(!chat) return;
+  var me = (SESSION.user && SESSION.user.name) ? SESSION.user.name.charAt(0) : '我';
+  var user = document.createElement('div');
+  user.className = 'kbq-bubble-wrap user';
+  user.innerHTML = '<div class="msg-avatar">' + esc(me) + '</div><div class="user-bubble" style="max-width:70%">' + esc(q) + '</div>';
+  chat.appendChild(user);
+  inp.value = '';
+  var ai = document.createElement('div');
+  ai.className = 'kbq-bubble-wrap';
+  var loadId = 'kbload' + Date.now();
+  ai.innerHTML = '<div class="msg-avatar">AI</div><div class="kbq-ai"><div class="kbq-loading" id="' + loadId + '"><i></i>正在检索知识库…</div></div>';
+  chat.appendChild(ai);
+  scrollKb();
+  kbBusy = true;
+  setTimeout(function(){
+    var l = document.getElementById(loadId);
+    if(l && l.parentElement) l.parentElement.innerHTML = kbAnswer(q);
+    kbBusy = false;
+    scrollKb();
+  }, 1200);
+}
+function kbAnswer(q){
+  var docs = [
+    { n: '世界银行 WDI 指标手册.pdf', m: '命中：GDP / CPI / 失业率 · 相似度 <b>92%</b>' },
+    { n: 'WDI 指标字典（22 列数据目录）.xlsx', m: '命中：指标代码 / 单位 / 时间口径 · 相似度 <b>88%</b>' },
+    { n: '世界银行数据接入说明.pdf', m: '命中：API 接入 / 字段映射 · 相似度 <b>76%</b>' }
+  ];
+  var cards = docs.map(function(d, i){
+    return '<div class="quote-card' + (i ? ' mt8' : '') + '" onclick="openQuoteDetail(' + (i + 1) + ')">' +
+      '<div class="qic"><svg width="18" height="18"><use href="#i-doc"></use></svg></div>' +
+      '<div class="qc-main"><div class="qc-name">' + esc(d.n) + '</div><div class="qc-meta">' + d.m + '</div></div>' +
+      '<svg width="15" height="15" style="color:#94A3B8"><use href="#i-chevron"></use></svg></div>';
+  }).join('');
+  return '<div class="kbq-text">根据「' + esc(q) + '」，本知识库命中以下相关文档：<br>世界银行 WDI 覆盖 200+ 个经济体的宏观、社会与环境指标，常用包括 <b>GDP 及增长率、人均 GDP、CPI 通胀率、失业率、贸易进出口、人口与城市化率</b> 等。点击下方文档卡片可查看命中原文与溯源信息。</div>' +
+    '<details class="doc-fold" open=""><summary>📄 知识库中找到 3 个文档</summary><div class="doc-list">' + cards + '</div></details>';
+}
+function newKbSession(){
+  var list = document.getElementById('kbSessList');
+  if(!list) return;
+  var n = list.children.length + 1;
+  var div = document.createElement('div');
+  div.className = 'kbq-sess active';
+  div.textContent = '新对话 ' + n;
+  div.setAttribute('onclick', 'switchKbSession(this)');
+  list.insertBefore(div, list.firstChild);
+  document.querySelectorAll('#kbSessList .kbq-sess').forEach(function(x){ x.classList.remove('active'); });
+  div.classList.add('active');
+  clearKbChat();
+  toast('已创建新对话');
+}
+function switchKbSession(el){
+  document.querySelectorAll('#kbSessList .kbq-sess').forEach(function(x){ x.classList.remove('active'); });
+  el.classList.add('active');
+  toast('已切换到：' + el.textContent.trim());
+}
+function clearKbChat(){
+  var chat = document.getElementById('kbqChat');
+  if(!chat) return;
+  chat.innerHTML = '<div class="kbq-bubble-wrap"><div class="msg-avatar">AI</div><div class="kbq-ai"><div class="kbq-text">你好，我是知识库问答助手。请描述你的问题，我将优先在本地知识库中检索，并附上引用来源供你溯源。</div></div></div>';
+}
+function scrollKb(){
+  var chat = document.getElementById('kbqChat');
+  if(chat) chat.scrollTop = chat.scrollHeight;
+}
+
+/* ---------- 来源详情弹窗 ---------- */
+var KBQ_DOCS = {
+  1: { name: '世界银行 WDI 指标手册.pdf', src: '本地知识库 · 世界银行数据说明（公开）', score: '92%', pos: '第 3 章 第 2 节 · 第 156-162 行', snippet: '世界银行 <mark>WDI</mark>（World Development Indicators）提供 <mark>GDP</mark>、<mark>CPI</mark>、失业率等 200+ 经济体的宏观与社会发展指标，数据可按年度 / 季度获取。' },
+  2: { name: 'WDI 指标字典（22 列数据目录）.xlsx', src: '本地知识库 · 数据目录（公开）', score: '88%', pos: '工作表「指标字典」 · 第 12-18 行', snippet: '指标代码 <mark>NY.GDP.MKTP.KD.ZG</mark> 表示 GDP 年增长率；单位：<mark>%</mark>；时间口径：自然年，对应 22 列统一数据目录。' },
+  3: { name: '世界银行数据接入说明.pdf', src: '本地知识库 · 数据接入指南（公开）', score: '76%', pos: '第 2 章 · 第 34-40 行', snippet: '通过 <mark>API</mark> 接入世界银行数据时，需按 22 列统一目录完成 <mark>字段映射</mark> 与单位换算后方可入库。' }
+};
+function openQuoteDetail(id){
+  var d = KBQ_DOCS[id];
+  var m = document.getElementById('quoteModal');
+  if(!d || !m) return;
+  m.innerHTML = '<div class="quote-modal">' +
+    '<div class="qm-head"><h3>来源详情</h3><button class="icon-btn sm" onclick="closeQuoteModal()"><svg width="16" height="16"><use href="#i-x"></use></svg></button></div>' +
+    '<div class="qm-body">' +
+      '<div class="qm-field"><div class="f">文档名称</div><div class="v">' + esc(d.name) + '</div></div>' +
+      '<div class="qm-field"><div class="f">来源库</div><div class="v">' + esc(d.src) + '</div></div>' +
+      '<div class="qm-field"><div class="f">命中原文片段</div><div class="qm-snippet">' + d.snippet + '</div></div>' +
+      '<div class="qm-field"><div class="f">相似度 / 位置</div><div class="v">' + esc(d.score) + ' · ' + esc(d.pos) + '</div></div>' +
+    '</div>' +
+    '<div class="qm-foot"><button class="btn sm" onclick="closeQuoteModal()">关闭</button><button class="btn sm primary" onclick="copyQuote()">复制引用</button></div>' +
+  '</div>';
+  m.classList.add('show');
+}
+function closeQuoteModal(){
+  var m = document.getElementById('quoteModal');
+  if(m) m.classList.remove('show');
+}
+function copyQuote(){
+  var t = document.querySelector('#quoteModal .qm-field .v');
+  var txt = t ? t.textContent : '';
+  if(navigator.clipboard && navigator.clipboard.writeText){ navigator.clipboard.writeText(txt).catch(function(){}); }
+  toast('已复制引用信息');
+}
+
+/* ---------- 知识库 · AI成果库 / 入库 / 内容维护 ---------- */
+function rKbAchievements(){
+  var total = document.getElementById('v3-ach-total');
+  var mine = document.getElementById('v3-ach-mine');
+  var review = document.getElementById('v3-ach-review');
+  var cards = document.getElementById('v3-ach-cards');
+  var me = (SESSION.user && SESSION.user.name) || '';
+  if(total) total.textContent = DB.kbEntries.length;
+  if(mine) mine.textContent = DB.kbEntries.filter(function(k){ return k.owner === me; }).length;
+  if(review) review.textContent = DB.kbEntries.filter(function(k){ return k.status === '复核中'; }).length;
+  if(cards){
+    cards.innerHTML = DB.kbEntries.map(function(k){
+      var badge = k.status === '已通过' ? '<span class="badge ok">已通过</span>'
+        : k.status === '复核中' ? '<span class="badge warn">复核中</span>'
+        : '<span class="badge err">' + esc(k.status) + '</span>';
+      return '<div class="ach-card">' +
+        '<div class="ac-head"><h3>' + esc(k.title) + '</h3>' + badge + '</div>' +
+        '<div class="ac-meta">' + esc(k.type) + ' · ' + esc(k.owner) + ' · ' + esc(k.time) + ' · ' + esc(k.scope) + '</div>' +
+        '<div class="ac-desc">来源相似度 <b style="color:var(--brand)">' + (k.score ? k.score.toFixed(2) : '—') + '</b> · 由 AI智搜 自动生成并沉淀至知识库，支持查看、编辑与下载。</div>' +
+        '<div class="ac-tags">' + tag('AI智搜', 'brand') + tag(k.type === 'Agent 生成' ? '智能体' : '数据') + '</div>' +
+        '<div class="ac-ops">' +
+          '<span class="link" onclick="openKbDetail(\'' + k.id + '\')">查看</span>' +
+          '<span class="link" onclick="editKb(\'' + k.id + '\')">编辑</span>' +
+          '<span class="link" onclick="startReview()">复核</span>' +
+          '<span class="link" onclick="downloadFile(\'' + esc(k.title) + '.docx\')">下载</span>' +
+        '</div>' +
+      '</div>';
+    }).join('') || '<div class="small muted" style="padding:10px 4px">暂无成果</div>';
+  }
+}
+function rKbIngest(){
+  var tb = document.getElementById('v3-ingest-tbody');
+  if(tb){
+    tb.innerHTML = (DB.kbReviewQueue || []).map(function(k){
+      return '<tr><td>' + esc(k.title) + '</td><td>' + tag(k.type === 'Agent 生成' ? '智能体' : '数据条目', 'brand') + '</td><td>' + st(k.status) + '</td><td>' + esc(k.time) + '</td></tr>';
+    }).join('') || '<tr><td colspan="4" class="small muted">暂无入库记录</td></tr>';
+  }
+}
+function rKbManage(){
+  var tb = document.getElementById('v3-kbmanage-tbody');
+  if(tb){
+    tb.innerHTML = DB.kbEntries.map(function(k){
+      return '<tr><td>' + esc(k.title) + '</td><td>' + tag(k.type) + '</td><td>' + (k.scope === '公开' ? tag('公开', 'success') : tag('私有', 'warning')) + '</td><td>' + st(k.status) + '</td><td>' + esc(k.time) + '</td>' +
+        '<td class="row-actions"><span class="link" onclick="editKb(\'' + k.id + '\')">编辑</span> · <span class="link" onclick="openTrace()">溯源</span> · <span class="link" onclick="toast(\'已归档：' + esc(k.title) + '\')">归档</span></td></tr>';
+    }).join('') || '<tr><td colspan="6" class="small muted">暂无条目</td></tr>';
+  }
+}
+
+/* ---------- 数据源接入 ---------- */
+function rUpload(){
+  var tb = document.getElementById('v3-upload-tbody');
+  if(tb){
+    tb.innerHTML = DB.imports.map(function(im){
+      var act = '';
+      if(im.status === '待审核') act = link('撤回', "withdrawImport('" + im.id + "')");
+      else if(im.status === '已退回') act = link('修改后重交', "resubmitImport('" + im.id + "')");
+      else if(im.status === '已通过') act = link('查看', "go('my-data')");
+      else act = link('重新提交', "resubmitImport('" + im.id + "')");
+      return '<tr><td>' + esc(im.name) + '</td><td>' + tag(im.type) + '</td><td>' + esc(im.time) + '</td><td class="num">' + esc(im.size) + '</td><td>' + st(im.status) + '</td><td class="row-actions">' + act + '</td></tr>';
+    }).join('') || '<tr><td colspan="6" class="small muted">暂无接入记录</td></tr>';
+  }
+}
+
+/* ---------- 个人中心 ---------- */
+function rMyData(){
+  var tb = document.getElementById('v3-mydata-tbody');
+  if(tb){
+    tb.innerHTML = DB.myData.map(function(d){
+      return '<tr><td><input type="checkbox"></td><td>' + esc(d.name) + '</td>' +
+        '<td>' + (d.tags || []).map(function(t){ return tag(t); }).join(' ') + '</td>' +
+        '<td>' + st(d.status) + '</td><td>' + esc(d.time) + '</td>' +
+        '<td class="row-actions"><span class="link" onclick="openTrace()">溯源</span> · <span class="link" onclick="archiveData(\'' + d.id + '\')">归档</span> · <span class="link" onclick="delData(\'' + d.id + '\')">删除</span></td></tr>';
+    }).join('') || '<tr><td colspan="6" class="small muted">暂无数据</td></tr>';
+  }
+}
+function rMyReports(){
+  var tb = document.getElementById('v3-myreports-tbody');
+  if(tb){
+    tb.innerHTML = DB.myReports.map(function(r){
+      return '<tr><td>' + esc(r.name) + '</td><td>' + tag(r.type) + '</td><td class="num">' + esc(r.ver) + '</td><td>' + esc(r.time) + '</td><td>' + st(r.status) + '</td>' +
+        '<td class="row-actions"><span class="link" onclick="versionCompare()">版本</span> · <span class="link" onclick="rollbackReport(\'' + esc(r.ver) + '\')">回滚</span> · <span class="link" onclick="copyLink()">分享</span> · <span class="link" onclick="downloadFile(\'' + esc(r.name) + '.docx\')">下载</span></td></tr>';
+    }).join('') || '<tr><td colspan="6" class="small muted">暂无报告</td></tr>';
+  }
+}
+
+/* ---------- 结算支付 / 账单查询 ---------- */
+function selPayMethod(el){
+  document.querySelectorAll('.pay-method').forEach(function(x){ x.classList.remove('sel'); });
+  el.classList.add('sel');
+}
+function payNow(){
+  var pending = DB.orders.find(function(o){ return o.status === '待支付'; });
+  var title = pending ? pending.title : '会员缴费 · 专业版年费';
+  var amount = pending ? pending.amount : 499;
+  formModal('确认支付', '<p>订单 <b>' + (pending ? pending.id : 'ORD202608100001') + '</b> · ' + esc(title) + '</p><p style="font-size:22px;font-weight:800;color:var(--brand);margin:10px 0">' + money(amount) + '</p><p style="color:var(--muted);font-size:12px">演示环境将模拟支付成功并回调更新订单状态</p>', '确认支付', function(){
+    if(pending){
+      pending.status = '已支付';
+    } else if(DB.orders[0]){
+      DB.orders[0].status = '已支付';
+    }
+    DB.payments.unshift({ id: 'WX' + Date.now(), channel: '微信支付', order: 'ORD202608100001', amount: 499, time: nowStr(), status: '成功' });
+    DB.invoices.unshift({ id: 'INV' + Date.now(), order: 'ORD202608100001', amount: '¥499.00', type: '电子普票', status: '已开具', date: todayStr() });
+    rPay(); rBilling();
+    toast('支付成功，已开具电子发票');
+  });
+}
+function rPay(){
+  var tb = document.getElementById('v3-pay-tbody');
+  if(tb){
+    tb.innerHTML = DB.orders.map(function(o){
+      return '<tr><td>' + esc(o.id) + '</td><td>' + esc(o.title) + '</td><td class="num">' + money(o.amount) + '</td><td>' + tag(o.channel) + '</td><td>' + st(o.status) + '</td><td>' + esc(o.time) + '</td></tr>';
+    }).join('') || '<tr><td colspan="6" class="small muted">暂无订单</td></tr>';
+  }
+  var po = document.querySelector('#view-pay .pay-order');
+  if(po){
+    var p = DB.orders.find(function(o){ return o.status === '待支付'; });
+    if(p){
+      po.innerHTML = '<div><div style="color:var(--muted2);font-size:12px">待支付订单 · ' + esc(p.title.replace('会员缴费 · ', '')) + '</div><div class="pay-amount">' + money(p.amount) + '</div><div style="color:var(--muted2);font-size:12px">订单号 ' + esc(p.id) + '</div></div><button class="btn primary" onclick="payNow()">立即支付</button>';
+    } else {
+      po.innerHTML = '<div><div style="color:var(--muted2);font-size:12px">当前没有待支付订单</div><div class="pay-amount" style="font-size:20px;color:var(--success)">全部订单已结清</div></div>';
+    }
+  }
+}
+function rBilling(){
+  var o = document.getElementById('v3-bill-orders');
+  var p = document.getElementById('v3-bill-payments');
+  var i = document.getElementById('v3-bill-invoices');
+  if(o){
+    o.innerHTML = DB.orders.map(function(x){
+      return '<tr><td>' + esc(x.id) + '</td><td>' + esc(x.title) + '</td><td class="num">' + money(x.amount) + '</td><td>' + tag(x.channel) + '</td><td>' + st(x.status) + '</td><td>' + esc(x.time) + '</td></tr>';
+    }).join('');
+  }
+  if(p){
+    p.innerHTML = DB.payments.map(function(x){
+      return '<tr><td>' + esc(x.id) + '</td><td>' + tag(x.channel) + '</td><td>' + esc(x.order) + '</td><td class="num">' + money(x.amount) + '</td><td>' + esc(x.time) + '</td><td>' + st(x.status) + '</td></tr>';
+    }).join('');
+  }
+  if(i){
+    i.innerHTML = DB.invoices.map(function(x){
+      return '<tr><td>' + esc(x.id) + '</td><td>' + esc(x.order) + '</td><td>' + esc(x.amount) + '</td><td>' + tag(x.type) + '</td><td>' + st(x.status) + '</td><td>' + esc(x.date) + '</td></tr>';
+    }).join('');
+  }
+}

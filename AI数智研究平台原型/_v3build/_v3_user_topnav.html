@@ -1,0 +1,59 @@
+
+<!-- ============ v3 顶部导航（仅用户端显示） ============ -->
+<header class="topnav" id="topnav">
+  <div class="tn-inner">
+    <div class="tn-brand" onclick="go('home')" title="返回首页">
+      <span class="brand-mark">AI</span><span class="tn-title">AI数智研究平台</span>
+    </div>
+    <nav class="tn-nav">
+      <a class="tn-item" data-tn="home" onclick="go('home')">首页</a>
+      <a class="tn-item" data-tn="smart-search" onclick="go('smart-search')">AI智搜</a>
+      <div class="tn-drop" id="tnKbDrop">
+        <a class="tn-item" data-tn="kb" onclick="toggleTNDrop(this)">知识库 <svg class="tn-chev" width="12" height="12"><use href="#i-chevron"></use></svg></a>
+        <div class="tn-menu">
+          <a onclick="go('kb-priority')">💬 对话问答</a>
+          <a onclick="go('kb-achievements')">📄 AI成果库</a>
+          <a onclick="go('kb-ingest')">🗂️ 检索成果入库</a>
+          <a onclick="go('kb-manage')">📚 内容维护</a>
+        </div>
+      </div>
+      <div class="tn-drop" id="tnPcDrop">
+        <a class="tn-item" data-tn="pc" onclick="toggleTNDrop(this)">个人中心 <svg class="tn-chev" width="12" height="12"><use href="#i-chevron"></use></svg></a>
+        <div class="tn-menu">
+          <a onclick="go('my-data')">📊 我的数据</a>
+          <a onclick="go('my-reports')">📑 我的报告</a>
+          <a onclick="go('upload')">📤 数据源接入</a>
+          <a onclick="go('pay')">💳 结算支付</a>
+          <a onclick="go('billing')">🧾 账单查询</a>
+        </div>
+      </div>
+    </nav>
+    <div class="tn-right">
+      <button class="tn-icon" title="消息通知" onclick="toggleNotif()"><svg width="18" height="18"><use href="#i-bell"></use></svg><span class="tn-dot"></span></button>
+      <span class="tn-pro">⭐ 专业版</span>
+      <div id="tnUser"></div>
+    </div>
+  </div>
+</header>
+
+<!-- 来源详情弹窗（chatwiki 引用溯源） -->
+<div class="quote-modal-mask" id="quoteModal"></div>
+
+<!-- 通知抽屉 -->
+<div class="notif-mask" id="notifMask" onclick="toggleNotif()"></div>
+<aside class="notif-drawer" id="notifDrawer">
+  <div class="notif-head"><h3>消息通知</h3><button class="icon-btn sm" onclick="toggleNotif()"><svg width="16" height="16"><use href="#i-x"></use></svg></button></div>
+  <div class="notif-list">
+    <div class="notif-item"><div class="nic"><svg width="16" height="16"><use href="#i-check"></use></svg></div><div><b>报告生成完成</b><small>《中美GDP增长率对比分析报告》已生成，可在 AI 成果库查看。</small><small style="color:#94A3B8">今天 10:24</small></div></div>
+    <div class="notif-item"><div class="nic"><svg width="16" height="16"><use href="#i-upload"></use></svg></div><div><b>数据接入审核结果</b><small>「2025年宏观数据」已通过审核并入库（A-08）。</small><small style="color:#94A3B8">昨天 16:40</small></div></div>
+    <div class="notif-item"><div class="nic"><svg width="16" height="16"><use href="#i-bell"></use></svg></div><div><b>会员续费提醒</b><small>专业版会员将于 2027-08-10 到期，请及时续费。</small><small style="color:#94A3B8">08-09 09:00</small></div></div>
+    <div class="notif-item"><div class="nic"><svg width="16" height="16"><use href="#i-refresh"></use></svg></div><div><b>知识库索引更新</b><small>知识库已完成增量更新（+328 条），检索更准确。</small><small style="color:#94A3B8">08-08 02:00</small></div></div>
+  </div>
+</aside>
+
+<style>
+.tn-chev{ transition:transform .15s; }
+.tn-drop.open .tn-chev{ transform:rotate(180deg); }
+body[data-end="user"] .tn-right{ position:relative; }
+body[data-end="user"] #tnUser .nav-user{ position:relative; }
+</style>
