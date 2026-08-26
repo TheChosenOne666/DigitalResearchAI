@@ -5,6 +5,11 @@ node_modules/
 dist/
 build/
 
+# 本地工具与缓存（沙箱环境下 pnpm/npm 安装到项目内）
+.tools/
+.npm-cache/
+.pnpm-store/
+
 # 环境变量与密钥
 .env
 .env.*

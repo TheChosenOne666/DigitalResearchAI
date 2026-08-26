@@ -1,0 +1,29 @@
+{
+  "name": "ai-shuzhiyanjiu",
+  "version": "0.1.0",
+  "private": true,
+  "description": "AI数智研究平台 monorepo（NestJS + Vue3 双端 + 共享包）",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "pnpm --parallel --filter @app/api --filter @app/web --filter @app/admin run dev",
+    "dev:api": "pnpm --filter @app/api dev",
+    "dev:web": "pnpm --filter @app/web dev",
+    "dev:admin": "pnpm --filter @app/admin dev",
+    "build": "pnpm --filter @app/shared build && pnpm --filter @app/api build && pnpm --filter @app/web build && pnpm --filter @app/admin build",
+    "test": "pnpm --filter @app/api test",
+    "lint": "eslint .",
+    "format": "prettier --write \"apps/*/src/**/*.{ts,vue,css}\" \"packages/*/src/**/*.ts\""
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.17.0",
+    "eslint": "^9.17.0",
+    "eslint-config-prettier": "^9.1.0",
+    "eslint-plugin-vue": "^9.32.0",
+    "globals": "^15.14.0",
+    "prettier": "^3.4.2",
+    "typescript": "^5.7.2",
+    "typescript-eslint": "^8.18.0"
+  }
+}
