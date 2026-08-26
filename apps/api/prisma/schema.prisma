@@ -1,0 +1,123 @@
+// AI数智研究平台 · Prisma 数据模型
+// M1 范围：租户域（tenants/users/roles/user_roles）+ 审计（audit_logs）
+// 其余域（会员计费/知识库/智搜/数据资源）在对应里程碑扩展
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../src/generated/prisma"
+}
+
+// Prisma 7：连接串移至 prisma.config.ts（datasource 不再支持 url）
+datasource db {
+  provider = "postgresql"
+}
+
+/// 租户状态
+enum TenantStatus {
+  /// 正常
+  ACTIVE
+  /// 已停用
+  DISABLED
+}
+
+/// 用户状态
+enum UserStatus {
+  /// 正常
+  ACTIVE
+  /// 已禁用（禁止登录）
+  DISABLED
+}
+
+/// 租户（个人注册自动创建个人租户，行级隔离载体）
+model Tenant {
+  id        String       @id @default(cuid()) @db.VarChar(32)
+  /// 租户名称（个人租户默认为「{昵称}的空间」）
+  name      String       @db.VarChar(128)
+  status    TenantStatus @default(ACTIVE)
+  createdAt DateTime     @default(now()) @map("created_at")
+  updatedAt DateTime     @updatedAt @map("updated_at")
+
+  users     User[]
+  auditLogs AuditLog[]
+
+  @@map("tenants")
+}
+
+/// 用户（手机号唯一；短信登录未注册自动创建）
+model User {
+  id           String     @id @default(cuid()) @db.VarChar(32)
+  /// 归属租户
+  tenantId     String     @map("tenant_id") @db.VarChar(32)
+  /// 手机号（登录账号）
+  phone        String     @unique @db.VarChar(20)
+  /// 密码哈希（bcrypt；仅短信注册的用户为空）
+  passwordHash String?    @map("password_hash")
+  /// 昵称
+  nickname     String     @db.VarChar(64)
+  status       UserStatus @default(ACTIVE)
+  /// 最近登录时间
+  lastLoginAt  DateTime?  @map("last_login_at")
+  createdAt    DateTime   @default(now()) @map("created_at")
+  updatedAt    DateTime   @updatedAt @map("updated_at")
+
+  tenant   Tenant      @relation(fields: [tenantId], references: [id])
+  roles    UserRole[]
+  auditLogs AuditLog[]
+
+  @@index([tenantId])
+  @@map("users")
+}
+
+/// 角色（内置三角色：PLATFORM_ADMIN / DATA_ADMIN / USER）
+model Role {
+  id          String   @id @default(cuid()) @db.VarChar(32)
+  /// 角色编码（唯一）
+  code        String   @unique @db.VarChar(32)
+  /// 角色名称
+  name        String   @db.VarChar(64)
+  /// 角色说明
+  description String?  @db.VarChar(255)
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  users UserRole[]
+
+  @@map("roles")
+}
+
+/// 用户-角色关联
+model UserRole {
+  userId String @map("user_id") @db.VarChar(32)
+  roleId String @map("role_id") @db.VarChar(32)
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role   Role   @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@id([userId, roleId])
+  @@map("user_roles")
+}
+
+/// 审计日志（登录/删除/导出/管理操作，保留 1 年）
+model AuditLog {
+  id         String   @id @default(cuid()) @db.VarChar(32)
+  /// 租户（系统级操作为空）
+  tenantId   String?  @map("tenant_id") @db.VarChar(32)
+  /// 操作人（未登录事件为空）
+  userId     String?  @map("user_id") @db.VarChar(32)
+  /// 动作（如 LOGIN / EXPORT / DELETE / ADMIN_OP）
+  action     String   @db.VarChar(64)
+  /// 目标资源类型
+  targetType String?  @map("target_type") @db.VarChar(64)
+  /// 目标资源 ID
+  targetId   String?  @map("target_id") @db.VarChar(64)
+  /// 详情（JSON 快照）
+  detail     Json?
+  /// 来源 IP
+  ip         String?  @db.VarChar(45)
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  tenant Tenant? @relation(fields: [tenantId], references: [id])
+  user   User?   @relation(fields: [userId], references: [id])
+
+  @@index([tenantId, createdAt])
+  @@index([userId, createdAt])
+  @@map("audit_logs")
+}

@@ -9,6 +9,11 @@ build/
 .tools/
 .npm-cache/
 .pnpm-store/
+.pnpm-cache/
+.prisma-cache/
+
+# Prisma 生成客户端（prisma generate 产物）
+apps/api/src/generated/
 
 # 环境变量与密钥
 .env

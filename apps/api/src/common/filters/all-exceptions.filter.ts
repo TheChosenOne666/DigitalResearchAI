@@ -8,6 +8,7 @@ import {
 } from '@nestjs/common';
 import { ZodError } from 'zod';
 import { ErrorCode, formatZodIssues } from '@app/shared';
+import { BizException } from '../exceptions/biz.exception';
 
 /** HTTP 状态码 → 业务错误码映射（1xxx 认证 / 2xxx 权限 / 4xxx 业务 / 5xxx 系统） */
 function statusToErrorCode(status: number): number {
@@ -39,6 +40,11 @@ export class AllExceptionsFilter implements ExceptionFilter {
       httpStatus = HttpStatus.BAD_REQUEST;
       code = ErrorCode.VALIDATION_FAILED;
       message = formatZodIssues(exception.issues);
+    } else if (exception instanceof BizException) {
+      // 业务异常：透传业务码
+      httpStatus = exception.getStatus();
+      code = exception.bizCode;
+      message = exception.message;
     } else if (exception instanceof HttpException) {
       httpStatus = exception.getStatus();
       code = statusToErrorCode(httpStatus);

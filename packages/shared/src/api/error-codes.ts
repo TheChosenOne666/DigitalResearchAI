@@ -8,12 +8,18 @@ export const ErrorCode = {
   /* ---- 1xxx 认证 ---- */
   /** 未登录 */
   UNAUTHORIZED: 1001,
-  /** 访问令牌无效 */
-  INVALID_ACCESS_TOKEN: 1002,
-  /** 访问令牌已过期 */
-  EXPIRED_ACCESS_TOKEN: 1003,
-  /** 刷新令牌无效 */
-  INVALID_REFRESH_TOKEN: 1004,
+  /** 会话无效或已过期 */
+  INVALID_SESSION: 1002,
+  /** 验证码错误或已过期 */
+  SMS_CODE_INVALID: 1005,
+  /** 验证码发送过频（60s 内重复发送） */
+  SMS_CODE_TOO_FREQUENT: 1006,
+  /** 验证码发送次数超限（IP/手机号维度限流） */
+  SMS_SEND_LIMIT_EXCEEDED: 1007,
+  /** 账号或密码错误 */
+  LOGIN_FAILED: 1008,
+  /** 账号已被禁用 */
+  ACCOUNT_DISABLED: 1009,
   /* ---- 2xxx 权限与租户 ---- */
   /** 无权限访问该资源 */
   FORBIDDEN: 2001,

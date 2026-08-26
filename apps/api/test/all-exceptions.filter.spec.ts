@@ -3,6 +3,7 @@ import { ArgumentsHost, ForbiddenException, NotFoundException } from '@nestjs/co
 import { z, ZodError } from 'zod';
 import { ErrorCode } from '@app/shared';
 import { AllExceptionsFilter } from '../src/common/filters/all-exceptions.filter';
+import { BizException } from '../src/common/exceptions/biz.exception';
 
 /** 构造模拟的 ArgumentsHost，捕获最终写出的 HTTP 状态与响应体 */
 function createMockHost(): { host: ArgumentsHost; captured: { status?: number; body?: unknown } } {
@@ -47,6 +48,13 @@ describe('AllExceptionsFilter', () => {
     filter.catch(new ForbiddenException(), host);
     expect(captured.status).toBe(403);
     expect(captured.body).toEqual({ code: ErrorCode.FORBIDDEN, message: 'Forbidden', data: null });
+  });
+
+  it('BizException → 透传业务码与 HTTP 状态', () => {
+    const { host, captured } = createMockHost();
+    filter.catch(new BizException(ErrorCode.SMS_CODE_INVALID, '验证码错误或已过期', 401), host);
+    expect(captured.status).toBe(401);
+    expect(captured.body).toEqual({ code: ErrorCode.SMS_CODE_INVALID, message: '验证码错误或已过期', data: null });
   });
 
   it('未知异常 → 500 / 5001 服务内部错误', () => {
