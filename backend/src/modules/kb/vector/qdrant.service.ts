@@ -123,6 +123,13 @@ export class QdrantService implements OnModuleInit {
     }));
   }
 
+  /** 列出现有 collection 名（混合检索时判断某租户库是否已建索引） */
+  async listCollectionNames(): Promise<string[]> {
+    const client = await this.getClient();
+    const res = await client.getCollections();
+    return (res.collections ?? []).map((c: any) => String(c.name));
+  }
+
   /** 是否可用（url 已配置即视为可尝试；调用前的连通探测由 onModuleInit 完成） */
   isEnabled(): boolean {
     return this.enabled;

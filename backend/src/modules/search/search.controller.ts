@@ -15,6 +15,7 @@ import type {
   SearchConditions,
   SearchHit,
   SearchMode,
+  SourceType,
 } from './connectors/connector.interface';
 import { SearchService } from './search.service';
 import { IntentService } from './intent/intent.service';
@@ -34,6 +35,13 @@ import {
 const DEFAULT_PAGE_SIZE = 10;
 /** 最大单页条数 */
 const MAX_PAGE_SIZE = 50;
+
+/** 三模式路由：各模式允许参与的检索路（M3.3 起本地路真实生效） */
+const ROUTES_BY_MODE: Record<SearchMode, ReadonlySet<SourceType>> = {
+  hybrid: new Set<SourceType>(['web', 'vertical', 'local']),
+  web: new Set<SourceType>(['web', 'vertical']),
+  local: new Set<SourceType>(['local']),
+};
 
 /** 安全解析 conditions JSON（失败回退空对象，不阻断管道） */
 function parseConditions(raw?: string): SearchConditions {
@@ -94,11 +102,11 @@ export class SearchController {
       const session = await this.store.createSession(user.userId, question, mode, conditions);
       send('cond_fill', { conditions } satisfies SseCondFill);
 
-      // 检索 + 融合
+      // 检索 + 融合（按模式路由检索路）
       stage = 'searching';
       send('stage', { stage, msg: '检索中' } satisfies SseStage);
       const input: ConnectorInput = { question, conditions };
-      const result = await this.search.search(input, ac.signal);
+      const result = await this.search.search(input, ac.signal, undefined, ROUTES_BY_MODE[mode]);
 
       stage = 'fusing';
       send('stage', { stage, msg: '融合中' } satisfies SseStage);

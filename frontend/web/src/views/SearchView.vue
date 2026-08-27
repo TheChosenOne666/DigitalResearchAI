@@ -423,7 +423,15 @@ onBeforeUnmount(() => abortCtrl.value?.abort());
               </div>
               <div class="src-title">{{ s.title }}</div>
               <div class="src-snippet">{{ s.snippet }}</div>
-              <a v-if="s.url" :href="s.url" target="_blank" rel="noopener" class="src-url" @click.stop>
+              <!-- kb:// 为本地来源的内部去重标识，非真实跳转地址，不渲染为链接 -->
+              <a
+                v-if="s.url && !s.url.startsWith('kb://')"
+                :href="s.url"
+                target="_blank"
+                rel="noopener"
+                class="src-url"
+                @click.stop
+              >
                 {{ s.url }}
               </a>
             </div>

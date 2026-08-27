@@ -70,3 +70,58 @@ describe('SearchService.search', () => {
     expect(res.ranked[0].hit.sourceType).toBe('local');
   });
 });
+
+describe('SearchService.search 三模式路由（M3.3）', () => {
+  it('routes 指定时仅调用对应来源的连接器', async () => {
+    const vertical = mockConn('vertical', [{ title: 'v', snippet: '', sourceType: 'vertical' }]);
+    const web = mockConn('web', [{ title: 'w', snippet: '', sourceType: 'web' }]);
+    const local = mockConn('local', [{ title: 'l', snippet: '', sourceType: 'local' }]);
+    const svc = new SearchService([web, vertical, local]);
+
+    // mode=local → 仅本地路
+    const res = await svc.search(input, new AbortController().signal, undefined, new Set(['local']));
+    expect(vertical.search).not.toHaveBeenCalled();
+    expect(web.search).not.toHaveBeenCalled();
+    expect(local.search).toHaveBeenCalledTimes(1);
+    expect(res.ranked[0].hit.sourceType).toBe('local');
+
+    // mode=web → 联网+垂直，无本地
+    await svc.search(input, new AbortController().signal, undefined, new Set(['web', 'vertical']));
+    expect(web.search).toHaveBeenCalledTimes(1);
+    expect(vertical.search).toHaveBeenCalledTimes(1);
+    expect(local.search).toHaveBeenCalledTimes(1); // 上一步调用后未再增加
+
+    // mode=hybrid（全量等价缺省）
+    await svc.search(input, new AbortController().signal, undefined, new Set(['web', 'vertical', 'local']));
+    expect(web.search).toHaveBeenCalledTimes(2);
+    expect(vertical.search).toHaveBeenCalledTimes(2);
+    expect(local.search).toHaveBeenCalledTimes(2);
+  });
+
+  it('routes 缺省跑全部连接器（向后兼容）', async () => {
+    const vertical = mockConn('vertical', []);
+    const local = mockConn('local', []);
+    const svc = new SearchService([vertical, local]);
+    await svc.search(input, new AbortController().signal);
+    expect(vertical.search).toHaveBeenCalledTimes(1);
+    expect(local.search).toHaveBeenCalledTimes(1);
+  });
+
+  it('routes 过滤后本地路加权仍生效（fusion localWeight）', async () => {
+    const localA = mockConn('local', [
+      { title: 'la', snippet: '', sourceType: 'local' },
+    ]);
+    const localB = mockConn('local', [
+      { title: 'lb', snippet: '', sourceType: 'local' },
+    ]);
+    const svc = new SearchService([localB, localA]);
+    const res = await svc.search(
+      input,
+      new AbortController().signal,
+      { topK: 10, citeCount: 6, localWeight: 1.2 },
+      new Set(['local']),
+    );
+    // 仅本地两路：RRF 得分相同（同 rank），命中都保留
+    expect(res.ranked.length).toBe(2);
+  });
+});

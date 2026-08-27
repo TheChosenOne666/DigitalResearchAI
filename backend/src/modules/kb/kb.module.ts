@@ -8,10 +8,11 @@ import { EmbedService } from './embeddings/embed.service';
 import { QdrantService } from './vector/qdrant.service';
 import { KbLearningService } from './learning/learning.service';
 import { ChunkEmbedProcessor } from './queue/chunk-embed.processor';
+import { KbRetrieverService } from './retriever/kb.retriever.service';
 
 /**
  * 知识库模块。
- * M3.1：库/分组/文档 CRUD；M3.2：上传解析 + 学习队列（DocParser/Embed/Qdrant/Learning/ChunkEmbedProcessor）。
+ * M3.1：库/分组/文档 CRUD；M3.2：上传解析 + 学习队列；M3.3：混合检索（KbRetriever）供智搜本地路复用。
  */
 @Module({
   imports: [PrismaModule],
@@ -24,7 +25,8 @@ import { ChunkEmbedProcessor } from './queue/chunk-embed.processor';
     QdrantService,
     KbLearningService,
     ChunkEmbedProcessor,
+    KbRetrieverService,
   ],
-  exports: [KbStoreService, KbLearningService],
+  exports: [KbStoreService, KbLearningService, KbRetrieverService],
 })
 export class KbModule {}

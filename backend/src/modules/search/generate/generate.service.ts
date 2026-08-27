@@ -47,7 +47,9 @@ export function buildGeneratePrompt(
 ): string {
   const ctxLines = sources.map((s, i) => {
     const n = i + 1;
-    const head = `[${n}] ${s.title}${s.url ? `（${s.url}）` : ''}`;
+    // kb:// 为本地来源内部去重标识，非真实链接，不进上下文
+    const url = s.url && !s.url.startsWith('kb://') ? `（${s.url}）` : '';
+    const head = `[${n}] ${s.title}${url}`;
     const body = s.contentMd ? `\n${s.contentMd}` : '';
     return `${head}${body}`;
   });
@@ -128,7 +130,9 @@ export class GenerateService {
 
   /** 无 Key/失败降级：输出结构化摘要，至少给前端可渲染内容 */
   private fallback(req: GenerateRequest, onChunk: (c: GenerateChunk) => void): GenerateResult {
-    const items = req.sources.map((s, i) => `${i + 1}. ${s.title}${s.url ? `（${s.url}）` : ''}`);
+    const items = req.sources.map(
+      (s, i) => `${i + 1}. ${s.title}${s.url && !s.url.startsWith('kb://') ? `（${s.url}）` : ''}`,
+    );
     const text =
       `## 检索结果摘要\n\n**问题**：${req.question}\n\n已检索到 ${req.sources.length} 条相关来源：\n\n${items.join('\n') || '（暂无可引用来源）'}\n`;
     onChunk({ text, citations: [] });

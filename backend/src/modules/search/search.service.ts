@@ -7,11 +7,11 @@ import type {
 } from './connectors/connector.interface';
 import { fuse, type FusionOptions, type FusionResult } from './fusion/fusion.service';
 
-/** 单路检索超时（毫秒），超时熔断不阻塞整体（M2.1 仅垂直/本地，web 为后续预留） */
+/** 单路检索超时（毫秒），超时熔断不阻塞整体；本地路含问题向量化网络调用（M3.3），预算放宽到 8s */
 export const CONNECTOR_TIMEOUT_MS: Record<SourceType, number> = {
   web: 15_000,
   vertical: 10_000,
-  local: 3_000,
+  local: 8_000,
 };
 
 /** 已注册连接器集合的注入令牌 */
@@ -68,14 +68,16 @@ export class SearchService {
     @Inject(SEARCH_CONNECTORS) private readonly connectors: SearchConnector[],
   ) {}
 
-  /** 执行检索管道（垂直+本地+M2.2 联网），返回融合结果 */
+  /** 执行检索管道，返回融合结果；routes 缺省跑全部路，传入时仅跑指定来源（三模式路由） */
   async search(
     input: ConnectorInput,
     signal: AbortSignal,
     opts?: FusionOptions,
+    routes?: ReadonlySet<SourceType>,
   ): Promise<FusionResult> {
+    const connectors = routes ? this.connectors.filter((c) => routes.has(c.sourceType)) : this.connectors;
     const settled = await Promise.allSettled(
-      this.connectors.map((c) =>
+      connectors.map((c) =>
         runConnector(c, input, signal, CONNECTOR_TIMEOUT_MS[c.sourceType]),
       ),
     );
