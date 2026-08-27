@@ -1,7 +1,6 @@
 import { createRouter, createWebHistory } from 'vue-router';
 import HomeView from '@/views/HomeView.vue';
 import LoginView from '@/views/LoginView.vue';
-import SearchView from '@/views/SearchView.vue';
 import KnowledgeView from '@/views/KnowledgeView.vue';
 import { useSessionStore } from '@/stores/session';
 
@@ -15,12 +14,12 @@ declare module 'vue-router' {
 const router = createRouter({
   history: createWebHistory(),
   routes: [
-    // 落地页 / 登录页：访客可访问（公开）
+    // 首页 = AI 智搜（已合并）：访客可看落地页，检索需登录（对齐原型 9.31 访客模式）
     { path: '/', name: 'home', component: HomeView, meta: { requiresAuth: false } },
     { path: '/login', name: 'login', component: LoginView, meta: { requiresAuth: false } },
-    // M2 智搜核心页（受登录门禁保护）
-    { path: '/search', name: 'search', component: SearchView, meta: { requiresAuth: true } },
-    // M3 知识库页（受登录门禁保护）
+    // M2 智搜已并入首页，旧 /search 重定向回首页
+    { path: '/search', redirect: '/' },
+    // M3 知识库页（受登录门禁保护，对齐原型 9.31）
     { path: '/knowledge', name: 'knowledge', component: KnowledgeView, meta: { requiresAuth: true } },
   ],
 });

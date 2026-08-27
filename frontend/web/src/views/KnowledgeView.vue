@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, reactive, ref } from 'vue';
-import { useRouter } from 'vue-router';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import type { UploadRequestOptions } from 'element-plus';
+import TopNav from '@/components/TopNav.vue';
 import {
   listLibraries,
   createLibrary,
@@ -24,21 +24,26 @@ import {
   type RecallTestResult,
 } from '@/api/kb';
 
-const router = useRouter();
-
 // ===== 页面级状态 =====
 
 /** 库卡片封面色可选值 */
 const COLORS = ['#2563EB', '#059669', '#D97706', '#DC2626', '#7C3AED', '#16675F'];
 
-/** 学习状态徽标映射 */
-const STATUS_META: Record<KbDocStatus, { label: string; type: 'info' | 'primary' | 'success' | 'danger' | 'warning' }> = {
-  PENDING: { label: '待审核', type: 'info' },
-  LEARNING: { label: '学习中', type: 'primary' },
+/** 学习状态徽标映射（对齐原型 9.12：用户端仅展示 学习完成/学习失败/学习中断 三态；待审核/学习中统一按「学习中断」呈现） */
+const STATUS_META: Record<KbDocStatus, { label: string; type: 'success' | 'danger' | 'warning' }> = {
+  PENDING: { label: '学习中断', type: 'warning' },
+  LEARNING: { label: '学习中断', type: 'warning' },
   READY: { label: '学习完成', type: 'success' },
   FAILED: { label: '学习失败', type: 'danger' },
   INTERRUPTED: { label: '学习中断', type: 'warning' },
 };
+
+/** 状态筛选选项（对齐原型：仅三学习态，不含审核态） */
+const STATUS_FILTER = [
+  { label: '学习完成', value: 'READY' },
+  { label: '学习失败', value: 'FAILED' },
+  { label: '学习中断', value: 'INTERRUPTED' },
+];
 
 const libs = ref<KbLibrary[]>([]);
 const libsLoading = ref(false);
@@ -409,30 +414,11 @@ function fmtTime(iso: string): string {
 }
 
 onBeforeUnmount(stopPolling);
-
-function goSearch(): void {
-  router.push('/search');
-}
 </script>
 
 <template>
   <div class="kb-page">
-    <!-- 顶栏 -->
-    <header class="topbar">
-      <div class="brand" @click="backToList">
-        <svg class="brand-logo" viewBox="0 0 32 32" aria-hidden="true">
-          <rect width="32" height="32" rx="7" fill="#2563EB" />
-          <path
-            d="M14 6.5a7.5 7.5 0 1 0 4.7 13.35l4.22 4.22a1.2 1.2 0 0 0 1.7-1.7l-4.22-4.22A7.5 7.5 0 0 0 14 6.5Zm-3.2 4.3h2v3.2h3.2v2h-3.2v3.2h-2v-3.2H7.6v-2h3.2v-3.2Z"
-            fill="#fff"
-          />
-        </svg>
-        <span class="brand-name">AI数智研究平台</span>
-      </div>
-      <div class="topbar-actions">
-        <el-button plain size="small" @click="goSearch">智搜</el-button>
-      </div>
-    </header>
+    <TopNav />
 
     <!-- ========== 列表态 ========== -->
     <main v-if="!current" class="list-main" v-loading="libsLoading">
@@ -550,10 +536,10 @@ function goSearch(): void {
                   @change="refreshDocs()"
                 >
                   <el-option
-                    v-for="(meta, key) in STATUS_META"
-                    :key="key"
-                    :label="meta.label"
-                    :value="key"
+                    v-for="opt in STATUS_FILTER"
+                    :key="opt.value"
+                    :label="opt.label"
+                    :value="opt.value"
                   />
                 </el-select>
                 <el-input
@@ -575,8 +561,8 @@ function goSearch(): void {
               </div>
 
               <div class="doc-alert">
-                文档状态：待审核（智搜存入）/ 学习中 / 学习完成 / 学习失败 / 学习中断；
-                失败与中断可重新学习，学习完成后参与 AI 智搜检索。
+                文档学习状态为「学习完成 / 学习失败 / 学习中断」，学习中断可点击继续学习；
+                学习完成后参与 AI 智搜的知识库优先检索。
               </div>
 
               <div class="doc-table" v-loading="docsLoading">
@@ -842,36 +828,6 @@ function goSearch(): void {
   min-height: 100%;
   display: flex;
   flex-direction: column;
-}
-
-.topbar {
-  position: sticky;
-  top: 0;
-  z-index: 10;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  background: #ffffff;
-  border-bottom: 1px solid #eef2f7;
-  padding: 10px 24px;
-}
-
-.brand {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  cursor: pointer;
-}
-
-.brand-logo {
-  width: 30px;
-  height: 30px;
-}
-
-.brand-name {
-  font-weight: 600;
-  font-size: 16px;
-  color: #0f172a;
 }
 
 .spacer {

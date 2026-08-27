@@ -1,17 +1,15 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, reactive, ref } from 'vue';
-import { useRouter } from 'vue-router';
+import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue';
+import { useRoute } from 'vue-router';
 import { ElMessage } from 'element-plus';
 import MarkdownView from '@/components/MarkdownView.vue';
+import LoginDialog from '@/components/LoginDialog.vue';
 import { useSessionStore } from '@/stores/session';
 import {
-  fetchHistories,
-  fetchReportDetail,
   searchStream,
   type SearchConditions,
   type SearchMode,
   type SearchStage,
-  type SessionListItem,
   type SseSource,
 } from '@/api/search';
 import {
@@ -22,8 +20,12 @@ import {
   type KbGroup,
 } from '@/api/kb';
 
-const router = useRouter();
+const route = useRoute();
 const session = useSessionStore();
+
+/** 访客检索引导登录弹窗 + 待检索问题（登录成功后自动续跑） */
+const loginVisible = ref(false);
+const pendingQuestion = ref('');
 
 /** 阶段顺序（5 阶段动画） */
 const STAGES: Array<{ key: SearchStage; label: string }> = [
@@ -40,6 +42,44 @@ const MODES: Array<{ value: SearchMode; label: string }> = [
   { value: 'web', label: '联网' },
   { value: 'local', label: '知识库' },
 ];
+
+/** 落地页快捷检索卡片（对齐原型 SS_SUGS，点击即发起检索） */
+const SUGS: Array<{ ic: string; t: string; d: string; q: string }> = [
+  { ic: '📁', t: '主要经济体 2025 年 GDP 排名', d: '经济数据 · 一键生成对比榜单', q: '主要经济体 2025 年 GDP 排名' },
+  { ic: '📈', t: '比较 2020-2025 年中美 GDP 增长率', d: '图表分析 · 趋势对比与深度解读', q: '比较 2020-2025 年中美 GDP 增长率' },
+  { ic: '📊', t: '中国 CPI / PPI 月度走势', d: '宏观监测 · 价格指数走势研判', q: '中国 CPI / PPI 月度走势' },
+  { ic: '🌐', t: '全球主要经济体通胀率对比', d: '国际对比 · 多源交叉验证', q: '全球主要经济体通胀率对比' },
+];
+
+/** 点击快捷卡片 → 回填问题并发起检索 */
+function quickSearch(q: string): void {
+  question.value = q;
+  startSearch();
+}
+
+/** 「+」上传入口（M4 数据源接入实现，暂占位） */
+function onUpload(): void {
+  ElMessage.info('外部数据上传（Excel/CSV）将在数据源接入中提供');
+}
+
+/** 一键清空 4 项筛选条件 */
+function resetCond(): void {
+  cond.countries = [];
+  cond.indicators = [];
+  cond.yearFrom = null;
+  cond.yearTo = null;
+  conditionsFilled.value = false;
+}
+
+/** 访客登录成功后：若有待检索问题则自动续跑 */
+function onLoginSuccess(): void {
+  loginVisible.value = false;
+  if (pendingQuestion.value) {
+    question.value = pendingQuestion.value;
+    pendingQuestion.value = '';
+    startSearch();
+  }
+}
 
 const question = ref('');
 const mode = ref<SearchMode>('hybrid');
@@ -80,6 +120,9 @@ function toggleCheck(idx: number): void {
 }
 
 const checkedCount = computed(() => checkedIdxs.value.size);
+
+/** 已勾选的来源列表（存入弹窗展示，对齐原型「本次勾选来源」清单） */
+const checkedSources = computed(() => sources.value.filter((s) => checkedIdxs.value.has(s.idx)));
 
 /** 「存入知识库」可用：检索已完成且有来源 */
 const canSaveKb = computed(() => !running.value && !!doneInfo.value?.sessionId && sources.value.length > 0);
@@ -188,6 +231,12 @@ function startSearch(): void {
     ElMessage.warning('请先输入要研究的问题');
     return;
   }
+  // 访客检索引导登录（对齐原型 9.31 访客模式：落地页可看，检索需登录）
+  if (!session.isLoggedIn) {
+    pendingQuestion.value = q;
+    loginVisible.value = true;
+    return;
+  }
   resetResult();
   submittedQuestion.value = q;
   stage.value = 'intent';
@@ -266,166 +315,114 @@ function onSourceClick(idx: number): void {
   activeCite.value = activeCite.value === idx ? null : idx;
 }
 
-/** ===== 历史记录 ===== */
-const historyVisible = ref(false);
-const historyLoading = ref(false);
-const histories = ref<SessionListItem[]>([]);
-
-async function openHistory(): Promise<void> {
-  historyVisible.value = true;
-  historyLoading.value = true;
-  try {
-    const data = await fetchHistories(1, 30);
-    histories.value = data.items;
-  } catch (e) {
-    ElMessage.error(e instanceof Error ? e.message : '历史加载失败');
-  } finally {
-    historyLoading.value = false;
-  }
-}
-
-function fillConditions(c: SearchConditions): void {
-  cond.countries = c.countries ?? [];
-  cond.indicators = c.indicators ?? [];
-  cond.yearFrom = c.yearFrom ?? null;
-  cond.yearTo = c.yearTo ?? null;
-  conditionsFilled.value = hasCond.value;
-}
-
-/** 打开历史会话详情 */
-async function openHistoryItem(item: SessionListItem): Promise<void> {
-  historyVisible.value = false;
-  try {
-    const detail = await fetchReportDetail(item.id);
-    resetResult();
-    submittedQuestion.value = item.question;
-    question.value = item.question;
-    mode.value = (item.mode as SearchMode) || 'hybrid';
-    if (item.conditions) fillConditions(item.conditions);
-    reportText.value = detail.contentMd;
-    sources.value = detail.sources.map((s) => ({
-      idx: s.idx,
-      title: s.title,
-      url: s.url ?? undefined,
-      snippet: s.snippet,
-      sourceType: s.sourceType,
-      isCited: s.isCited,
-    }));
-    // 历史报告同样可勾选来源存入知识库
-    doneInfo.value = { sessionId: item.id, reportId: detail.id };
-    checkedIdxs.value = new Set(sources.value.map((s) => s.idx));
-    stage.value = 'done';
-    running.value = false;
-    showResult.value = true;
-  } catch (e) {
-    ElMessage.error(e instanceof Error ? e.message : '报告加载失败');
-  }
-}
-
-async function onLogout(): Promise<void> {
-  await session.logout();
-  router.push('/');
-}
+/** 顶部导航「历史记录」点击 → 带 query.q 跳回首页，此处监听并自动发起检索 */
+watch(
+  () => route.query.q,
+  (q) => {
+    if (typeof q === 'string' && q.trim()) {
+      question.value = q.trim();
+      startSearch();
+    }
+  },
+);
 
 onBeforeUnmount(() => abortCtrl.value?.abort());
 </script>
 
 <template>
   <div class="search-page">
-    <!-- 顶栏 -->
-    <header class="topbar">
-      <div class="brand">
-        <svg class="brand-logo" viewBox="0 0 32 32" aria-hidden="true">
-          <rect width="32" height="32" rx="7" fill="#2563EB" />
-          <path
-            d="M14 6.5a7.5 7.5 0 1 0 4.7 13.35l4.22 4.22a1.2 1.2 0 0 0 1.7-1.7l-4.22-4.22A7.5 7.5 0 0 0 14 6.5Zm-3.2 4.3h2v3.2h3.2v2h-3.2v3.2h-2v-3.2H7.6v-2h3.2v-3.2Z"
-            fill="#fff"
-          />
-        </svg>
-        <span class="brand-name">AI数智研究平台</span>
-      </div>
-      <div class="topbar-actions">
-        <el-button plain size="small" @click="openHistory">历史记录</el-button>
-        <span class="user-name">{{ session.user?.nickname }}</span>
-        <el-button link size="small" @click="onLogout">退出</el-button>
-      </div>
-    </header>
-
     <main class="search-main">
-      <!-- 搜索输入卡 -->
+      <!-- 落地态头部（标题，仅未出结果时） -->
+      <div v-if="!showResult" class="landing-head">
+        <div class="ss-logo">AI</div>
+        <h1 class="ss-title">一站式数据智能搜索</h1>
+        <p class="ss-sub">输入研究问题，AI 自动完成多源检索、数据标准化、智能分析与研究成果生成</p>
+      </div>
+
+      <!-- 搜索输入卡（对齐原型 ss-box：输入行 + 筛选行） -->
       <section class="query-card">
-        <el-input
-          v-model="question"
-          type="textarea"
-          :rows="2"
-          resize="none"
-          placeholder="提出一个研究问题，例如：美国过去十年的 GDP 增长如何？影响主要因素有哪些？"
-        />
-        <div class="query-row">
-          <div class="mode-group">
-            <span class="mode-label">模式</span>
-            <el-radio-group v-model="mode" size="small">
-              <el-radio-button v-for="m in MODES" :key="m.value" :value="m.value">
-                {{ m.label }}
-              </el-radio-button>
-            </el-radio-group>
-          </div>
-          <div class="query-actions">
-            <el-button v-if="running" type="danger" plain @click="stopSearch">停止</el-button>
-            <el-button
-              type="primary"
-              :loading="running && !isGenerating"
-              :disabled="running"
-              @click="startSearch"
-            >
-              智 搜
-            </el-button>
-          </div>
+        <div class="ss-box-row">
+          <button class="ss-plus" title="上传 / 接入外部数据（Excel、CSV）" @click="onUpload">+</button>
+          <input
+            class="ss-input"
+            v-model="question"
+            placeholder="询问任何问题…"
+            @keydown.enter="startSearch"
+          />
+          <button
+            class="ss-send"
+            :class="{ stop: running }"
+            @click="running ? stopSearch() : startSearch()"
+          >
+            <svg class="send-ic" viewBox="0 0 24 24" fill="none">
+              <circle cx="11" cy="11" r="7" stroke="currentColor" stroke-width="2" />
+              <path d="M21 21l-4.35-4.35" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+            </svg>
+            {{ running ? '停止' : '搜索' }}
+          </button>
         </div>
 
-        <!-- 条件栏（AI 回填 has-val 深色态，可手动微调） -->
-        <div class="cond-bar" :class="{ 'has-val': hasCond }">
-          <span class="cond-title">检索条件</span>
+        <div class="ss-conds">
+          <el-select v-model="mode" class="ss-mode-sel">
+            <el-option v-for="m in MODES" :key="m.value" :label="m.label" :value="m.value" />
+          </el-select>
           <el-select
             v-model="cond.countries"
+            class="ss-cond"
+            :class="{ 'has-val': cond.countries.length }"
             multiple
             filterable
             allow-create
             default-first-option
-            placeholder="国家/地区"
-            size="small"
-            class="cond-item"
+            collapse-tags
+            placeholder="国家 / 地区"
+            title="国家 / 地区（AI 自动识别，可手动修改）"
           >
           </el-select>
           <el-select
             v-model="cond.indicators"
+            class="ss-cond"
+            :class="{ 'has-val': cond.indicators.length }"
             multiple
             filterable
             allow-create
             default-first-option
-            placeholder="指标"
-            size="small"
-            class="cond-item"
+            collapse-tags
+            placeholder="统计指标"
+            title="统计指标（AI 自动识别，可手动修改）"
           >
           </el-select>
           <el-input-number
             v-model="cond.yearFrom"
+            class="ss-cond ss-year"
+            :class="{ 'has-val': cond.yearFrom != null }"
             :min="1900"
             :max="2100"
             :controls="false"
-            placeholder="起始年"
-            size="small"
-            class="cond-year"
+            placeholder="开始年份"
+            title="开始年份（AI 自动识别，可手动修改）"
           />
           <el-input-number
             v-model="cond.yearTo"
+            class="ss-cond ss-year"
+            :class="{ 'has-val': cond.yearTo != null }"
             :min="1900"
             :max="2100"
             :controls="false"
-            placeholder="结束年"
-            size="small"
-            class="cond-year"
+            placeholder="结束年份"
+            title="结束年份（AI 自动识别，可手动修改）"
           />
+          <button class="ss-reset" title="重置 4 项筛选条件" @click="resetCond">
+            <svg viewBox="0 0 24 24" fill="none">
+              <path
+                d="M4 4v6h6M20 20v-6h-6M5.6 9A7 7 0 0 1 18 7M18.4 15A7 7 0 0 1 6 17"
+                stroke="currentColor"
+                stroke-width="1.8"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
+            </svg>
+          </button>
           <span v-if="conditionsFilled" class="filled-tip">AI 已回填，可手动微调</span>
         </div>
       </section>
@@ -556,19 +553,24 @@ onBeforeUnmount(() => abortCtrl.value?.abort());
         </aside>
       </section>
 
-      <section v-else class="empty-state">
-        <div class="empty-logo">
-          <svg viewBox="0 0 32 32" aria-hidden="true">
-            <rect width="32" height="32" rx="7" fill="#2563EB" />
-            <path
-              d="M14 6.5a7.5 7.5 0 1 0 4.7 13.35l4.22 4.22a1.2 1.2 0 0 0 1.7-1.7l-4.22-4.22A7.5 7.5 0 0 0 14 6.5Zm-3.2 4.3h2v3.2h3.2v2h-3.2v3.2h-2v-3.2H7.6v-2h3.2v-3.2Z"
-              fill="#fff"
-            />
-          </svg>
+      <!-- 落地态：快捷卡片 + 能力点 -->
+      <template v-else>
+        <div class="ss-sugs">
+          <button v-for="sug in SUGS" :key="sug.q" class="ss-sug" @click="quickSearch(sug.q)">
+            <span class="sug-ic">{{ sug.ic }}</span>
+            <span class="sug-txt">
+              <b>{{ sug.t }}</b>
+              <small>{{ sug.d }}</small>
+            </span>
+          </button>
         </div>
-        <h2 class="empty-title">AI 数智研究 · 智搜</h2>
-        <p class="empty-sub">输入问题 → 多源检索 → 智能分析 → 结构化报告</p>
-      </section>
+        <div class="ss-landing-foot">
+          <span>覆盖 10+ 数据源</span>
+          <span>检索可溯源</span>
+          <span>智能可视化</span>
+          <span>一键生成 Word</span>
+        </div>
+      </template>
     </main>
 
     <!-- 存入知识库弹窗（M3.4：勾选来源逐条转为 Markdown 文档，待审核） -->
@@ -611,6 +613,18 @@ onBeforeUnmount(() => abortCtrl.value?.abort());
         <label>标签（可选，逗号分隔）</label>
         <el-input v-model="saveForm.tags" placeholder="如：宏观经济, GDP" maxlength="80" />
       </div>
+      <div class="field">
+        <label>本次勾选来源（{{ checkedCount }} 条，每个来源将独立存入知识库并切片）</label>
+        <div class="src-save-list">
+          <div v-for="s in checkedSources" :key="s.idx" class="src-save-item">
+            <div class="ssi-top">
+              <span class="ssi-name">{{ s.title }}</span>
+              <span class="ssi-type">{{ sourceTypeLabel(s.sourceType) }}</span>
+            </div>
+            <div v-if="s.url && !s.url.startsWith('kb://')" class="ssi-url">{{ s.url }}</div>
+          </div>
+        </div>
+      </div>
       <template #footer>
         <el-button @click="saveVisible = false">取消</el-button>
         <el-button type="primary" :loading="saving" @click="submitSaveKb">
@@ -619,24 +633,8 @@ onBeforeUnmount(() => abortCtrl.value?.abort());
       </template>
     </el-dialog>
 
-    <!-- 历史记录抽屉 -->
-    <el-drawer v-model="historyVisible" title="历史记录" size="360px" :with-header="true">
-      <div v-loading="historyLoading" class="hist-list">
-        <div
-          v-for="item in histories"
-          :key="item.id"
-          class="hist-item"
-          @click="openHistoryItem(item)"
-        >
-          <div class="hist-question">{{ item.question }}</div>
-          <div class="hist-meta">
-            <span>{{ item.mode }}</span>
-            <span>{{ new Date(item.createdAt).toLocaleString() }}</span>
-          </div>
-        </div>
-        <el-empty v-if="!historyLoading && !histories.length" description="暂无历史" :image-size="60" />
-      </div>
-    </el-drawer>
+    <!-- 访客检索引导登录（对齐原型 9.31：落地页可看，检索需登录） -->
+    <LoginDialog v-if="loginVisible" @success="onLoginSuccess" @close="loginVisible = false" />
   </div>
 </template>
 
@@ -647,120 +645,266 @@ onBeforeUnmount(() => abortCtrl.value?.abort());
   flex-direction: column;
 }
 
-.topbar {
-  position: sticky;
-  top: 0;
-  z-index: 10;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  background: #ffffff;
-  border-bottom: 1px solid #eef2f7;
-  padding: 10px 24px;
-}
-
-.brand {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
-.brand-logo {
-  width: 30px;
-  height: 30px;
-}
-
-.brand-name {
-  font-weight: 600;
-  font-size: 16px;
-  color: #0f172a;
-}
-
-.topbar-actions {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-}
-
-.user-name {
-  font-size: 14px;
-  color: #334155;
-}
-
 .search-main {
   flex: 1;
   width: 100%;
-  max-width: 1180px;
+  max-width: 1020px;
   margin: 0 auto;
   padding: 24px 24px 48px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
 }
+
+/* ---- 落地态头部 ---- */
+
+.landing-head {
+  text-align: center;
+  margin-top: 12px;
+}
+
+.ss-logo {
+  display: grid;
+  width: 62px;
+  height: 62px;
+  margin: 0 auto;
+  place-items: center;
+  border-radius: 18px;
+  color: #fff;
+  font-size: 24px;
+  font-weight: 900;
+  background: linear-gradient(135deg, #2563eb, #1d4ed8);
+  box-shadow: 0 14px 30px rgba(37, 99, 235, 0.3);
+}
+
+.ss-title {
+  margin: 20px 0 8px;
+  font-size: 30px;
+  font-weight: 800;
+  letter-spacing: 0.01em;
+  text-align: center;
+  color: #0f172a;
+}
+
+.ss-sub {
+  margin: 0 0 26px;
+  color: #64748b;
+  font-size: 14px;
+  text-align: center;
+}
+
+/* ---- 输入卡（对齐原型 ss-box） ---- */
 
 .query-card {
+  width: min(960px, 100%);
+  padding: 12px;
+  border: 1px solid #cbd5e1;
+  border-radius: 20px;
   background: #fff;
-  border: 1px solid #eef2f7;
-  border-radius: 14px;
-  box-shadow: 0 2px 14px rgba(30, 41, 59, 0.04);
-  padding: 18px;
+  box-shadow: 0 12px 34px rgba(15, 23, 42, 0.08);
+  transition: border-color 0.15s, box-shadow 0.15s;
 }
 
-.query-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-top: 14px;
+.query-card:focus-within {
+  border-color: #2563eb;
+  box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.12), 0 12px 34px rgba(15, 23, 42, 0.1);
 }
 
-.mode-group {
+.ss-box-row {
   display: flex;
   align-items: center;
   gap: 8px;
 }
 
-.mode-label {
-  font-size: 13px;
-  color: #64748b;
+.ss-plus {
+  width: 42px;
+  height: 42px;
+  flex: 0 0 auto;
+  border: 0;
+  border-radius: 12px;
+  background: #e7f0ff;
+  color: #2563eb;
+  font-size: 22px;
+  font-weight: 700;
+  cursor: pointer;
 }
 
-.query-actions {
-  display: flex;
-  gap: 10px;
+.ss-plus:hover {
+  background: #dbeafe;
 }
 
-.cond-bar {
+.ss-input {
+  flex: 1;
+  min-width: 0;
+  height: 44px;
+  padding: 0 6px;
+  border: 0;
+  outline: none;
+  background: transparent;
+  font-size: 15px;
+  color: #0f172a;
+}
+
+.ss-input::placeholder {
+  color: #94a3b8;
+}
+
+.ss-send {
+  height: 44px;
+  flex: 0 0 auto;
+  padding: 0 20px;
+  border: 0;
+  border-radius: 12px;
+  color: #fff;
+  font-size: 14px;
+  font-weight: 700;
+  background: linear-gradient(135deg, #2563eb, #1d4ed8);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+}
+
+.ss-send:hover {
+  filter: brightness(1.06);
+}
+
+.ss-send.stop {
+  background: linear-gradient(135deg, #dc2626, #b91c1c);
+}
+
+.send-ic {
+  width: 15px;
+  height: 15px;
+}
+
+/* ---- 筛选行 ---- */
+
+.ss-conds {
   display: flex;
   align-items: center;
+  gap: 8px;
+  padding: 10px 0 0;
   flex-wrap: wrap;
-  gap: 10px;
-  margin-top: 14px;
-  padding: 12px;
-  border-radius: 10px;
-  background: #f8fafc;
-  border: 1px dashed #e2e8f0;
-  transition: background 0.3s;
 }
 
-.cond-bar.has-val {
-  background: #eef2ff;
+.ss-mode-sel {
+  flex: 0 0 auto;
+  width: 110px;
+}
+
+.ss-cond {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+.ss-year {
+  flex: 0 0 auto;
+  width: 120px;
+}
+
+.ss-conds :deep(.el-select__wrapper) {
+  min-height: 36px;
+  border-radius: 10px;
+}
+
+.ss-cond.has-val :deep(.el-select__wrapper) {
+  background: #fff;
   border-color: #2563eb;
 }
 
-.cond-title {
-  font-size: 13px;
-  color: #475569;
-  white-space: nowrap;
+.ss-reset {
+  width: 36px;
+  height: 36px;
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid #cbd5e1;
+  border-radius: 10px;
+  background: #f8fafc;
+  color: #64748b;
+  cursor: pointer;
 }
 
-.cond-item {
-  width: 220px;
+.ss-reset svg {
+  width: 16px;
+  height: 16px;
 }
 
-.cond-year {
-  width: 110px;
+.ss-reset:hover {
+  border-color: #2563eb;
+  color: #2563eb;
+  background: #eff6ff;
 }
 
 .filled-tip {
   font-size: 12px;
   color: #2563eb;
+  white-space: nowrap;
+}
+
+/* ---- 落地态快捷卡片 + 能力点 ---- */
+
+.ss-sugs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+  width: min(960px, 100%);
+  margin-top: 28px;
+}
+
+.ss-sug {
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  padding: 16px 18px;
+  border: 1px solid #e2e8f0;
+  border-radius: 16px;
+  background: #fff;
+  cursor: pointer;
+  text-align: left;
+  transition: transform 0.18s, box-shadow 0.18s, border-color 0.18s;
+}
+
+.ss-sug:hover {
+  transform: translateY(-2px);
+  border-color: #bfdbfe;
+  box-shadow: 0 12px 28px rgba(37, 99, 235, 0.12);
+}
+
+.sug-ic {
+  display: grid;
+  width: 42px;
+  height: 42px;
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: 12px;
+  background: #e7f0ff;
+  font-size: 19px;
+}
+
+.sug-txt b {
+  display: block;
+  font-size: 14px;
+  color: #0f172a;
+}
+
+.sug-txt small {
+  display: block;
+  margin-top: 3px;
+  color: #94a3b8;
+  font-size: 11.5px;
+  line-height: 1.45;
+}
+
+.ss-landing-foot {
+  margin-top: 24px;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  color: #94a3b8;
+  font-size: 12px;
 }
 
 .result-layout {
@@ -1018,64 +1162,6 @@ onBeforeUnmount(() => abortCtrl.value?.abort());
   word-break: break-all;
 }
 
-.empty-state {
-  text-align: center;
-  padding: 90px 0 60px;
-}
-
-.empty-logo {
-  width: 72px;
-  height: 72px;
-  margin: 0 auto;
-  opacity: 0.9;
-}
-
-.empty-title {
-  margin-top: 24px;
-  font-size: 24px;
-  font-weight: 700;
-  color: #0f172a;
-}
-
-.empty-sub {
-  margin-top: 10px;
-  font-size: 14px;
-  color: #64748b;
-}
-
-.hist-list {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-.hist-item {
-  background: #f8fafc;
-  border: 1px solid #eef2f7;
-  border-radius: 10px;
-  padding: 12px 14px;
-  cursor: pointer;
-  transition: background 0.2s;
-}
-
-.hist-item:hover {
-  background: #eef2ff;
-}
-
-.hist-question {
-  font-size: 14px;
-  color: #1e293b;
-  line-height: 1.5;
-}
-
-.hist-meta {
-  margin-top: 6px;
-  display: flex;
-  gap: 12px;
-  font-size: 12px;
-  color: #94a3b8;
-}
-
 /* ---- 存入知识库弹窗 ---- */
 
 .save-hint {
@@ -1098,6 +1184,57 @@ onBeforeUnmount(() => abortCtrl.value?.abort());
   font-size: 12.5px;
   color: #64748b;
   margin-bottom: 6px;
+}
+
+.src-save-list {
+  max-height: 200px;
+  overflow-y: auto;
+  border: 1px solid #eef2f7;
+  border-radius: 10px;
+  background: #f8fafc;
+}
+
+.src-save-item {
+  padding: 8px 12px;
+  border-bottom: 1px solid #f1f5f9;
+}
+
+.src-save-item:last-child {
+  border-bottom: none;
+}
+
+.ssi-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.ssi-name {
+  font-size: 13px;
+  color: #1e293b;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ssi-type {
+  flex-shrink: 0;
+  font-size: 11px;
+  color: #2563eb;
+  background: #e9effd;
+  border-radius: 4px;
+  padding: 1px 6px;
+}
+
+.ssi-url {
+  margin-top: 3px;
+  font-size: 11.5px;
+  color: #94a3b8;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 @media (max-width: 960px) {
