@@ -1,16 +1,21 @@
 import { Module } from '@nestjs/common';
+import { PrismaModule } from '../../common/prisma/prisma.module';
 import { SearchController } from './search.controller';
 import { SearchService, SEARCH_CONNECTORS } from './search.service';
 import { VerticalWorldBankConnector } from './connectors/vertical.connector';
 import { LocalConnector } from './connectors/local.connector';
 import { WebAnySearchConnector } from './connectors/web.connector';
 import { IntentService } from './intent/intent.service';
+import { GenerateService } from './generate/generate.service';
+import { SearchStoreService } from './persistence/search.store.service';
 
 /**
  * 智搜模块（M2 核心管道）。
- * 三路连接器：垂直路(WDI) + 本地桩 + 联网路(AnySearch 直连)；意图分类服务为 SSE 编排提供条件回填。
+ * 三路连接器：垂直路(WDI) + 本地桩 + 联网路(AnySearch 直连)；
+ * 意图分类(M2.2) + 流式生成(M2.3) + 会话/报告/来源/用量持久化(M2.3) 为 SSE 编排提供服务。
  */
 @Module({
+  imports: [PrismaModule],
   controllers: [SearchController],
   providers: [
     SearchService,
@@ -18,6 +23,8 @@ import { IntentService } from './intent/intent.service';
     LocalConnector,
     WebAnySearchConnector,
     IntentService,
+    GenerateService,
+    SearchStoreService,
     {
       provide: SEARCH_CONNECTORS,
       useFactory: (
