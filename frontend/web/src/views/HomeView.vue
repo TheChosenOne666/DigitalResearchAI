@@ -1,15 +1,21 @@
 <script setup lang="ts">
 import { ref } from 'vue';
+import { useRouter } from 'vue-router';
 import { ElMessage } from 'element-plus';
 import LoginDialog from '@/components/LoginDialog.vue';
 import { useSessionStore } from '@/stores/session';
 
+const router = useRouter();
 const session = useSessionStore();
 const showLogin = ref(false);
 
 async function onLogout(): Promise<void> {
   await session.logout();
   ElMessage.success('已退出登录');
+}
+
+function goSearch(): void {
+  router.push('/search');
 }
 </script>
 
@@ -28,6 +34,9 @@ async function onLogout(): Promise<void> {
 
       <div class="hero-actions">
         <template v-if="session.isLoggedIn && session.user">
+          <el-button type="primary" size="large" @click="goSearch">
+            进入智搜
+          </el-button>
           <div class="user-chip">
             <span class="user-name">{{ session.user.nickname }}</span>
             <span class="user-phone">{{ session.user.phone.replace(/(\d{3})\d{4}(\d{4})/, '$1****$2') }}</span>
@@ -40,7 +49,6 @@ async function onLogout(): Promise<void> {
           </el-button>
         </template>
       </div>
-      <p class="hero-note">AI 智搜首页将随 M2 里程碑上线</p>
     </div>
 
     <LoginDialog v-if="showLogin" @success="showLogin = false" @close="showLogin = false" />
@@ -80,6 +88,10 @@ async function onLogout(): Promise<void> {
 
 .hero-actions {
   margin-top: 32px;
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
 }
 
 .user-chip {
@@ -101,11 +113,5 @@ async function onLogout(): Promise<void> {
 .user-phone {
   font-size: 13px;
   color: #64748b;
-}
-
-.hero-note {
-  margin-top: 20px;
-  font-size: 12px;
-  color: #94a3b8;
 }
 </style>

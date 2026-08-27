@@ -1,6 +1,7 @@
 import { createRouter, createWebHistory } from 'vue-router';
 import HomeView from '@/views/HomeView.vue';
 import LoginView from '@/views/LoginView.vue';
+import SearchView from '@/views/SearchView.vue';
 import { useSessionStore } from '@/stores/session';
 
 /** 路由元信息扩展：requiresAuth=true 表示该路由需登录 */
@@ -16,7 +17,8 @@ const router = createRouter({
     // 落地页 / 登录页：访客可访问（公开）
     { path: '/', name: 'home', component: HomeView, meta: { requiresAuth: false } },
     { path: '/login', name: 'login', component: LoginView, meta: { requiresAuth: false } },
-    // M2 智搜等核心页将标 requiresAuth: true，自动受守卫保护
+    // M2 智搜核心页（受登录门禁保护）
+    { path: '/search', name: 'search', component: SearchView, meta: { requiresAuth: true } },
   ],
 });
 
