@@ -10,6 +10,7 @@ import {
 } from './parse/doc-parser.service';
 import { KbLearningService, type LearnDocumentPayload } from './learning/learning.service';
 import { KbStoreService } from './store/kb.store.service';
+import { buildSourceDocument, type SourceDocInput } from './save/source-doc';
 import { Queue } from 'bullmq';
 
 /** 数据库存储原文件的最大字节（超出后端不落盘，仅解析学习） */
@@ -131,5 +132,97 @@ export class KbService {
       await this.learning.markFailed(payload.tenantId, payload.documentId, (e as Error).message);
       return false;
     }
+  }
+
+  // ===== 存入与审核链路（M3.4）=====
+
+  /**
+   * 智搜勾选来源存入知识库：每条来源独立生成一份 Markdown 文档落库，
+   * 状态停留 PENDING（待审核）；审核通过后由审核接口触发自动学习。
+   * @returns 创建的文档 id 与文档名列表
+   */
+  async saveSourcesToLibrary(params: {
+    libraryId: string;
+    groupId: string | null;
+    visibility: string;
+    tags: string[];
+    sessionId: string;
+    question?: string | null;
+    sources: SourceDocInput[];
+  }): Promise<{ created: number; documents: Array<{ id: string; name: string }> }> {
+    const { tenantId } = this.requireTenant();
+    const lib = await this.store.getLibrary(params.libraryId);
+    if (!lib) {
+      throw new BizException(ErrorCode.NOT_FOUND, '目标知识库不存在', HttpStatus.NOT_FOUND);
+    }
+    if (params.groupId) {
+      const groups = await this.store.listGroups(params.libraryId);
+      if (!groups.some((g) => g.id === params.groupId)) {
+        throw new BizException(ErrorCode.VALIDATION_FAILED, '分组不存在或不属于该知识库', HttpStatus.BAD_REQUEST);
+      }
+    }
+    const visibility = params.visibility === 'PUBLIC' ? 'PUBLIC' : 'PRIVATE';
+    const documents: Array<{ id: string; name: string }> = [];
+    for (const src of params.sources) {
+      const doc = buildSourceDocument(src, {
+        sessionId: params.sessionId,
+        question: params.question ?? null,
+      });
+      const created = await this.store.createDocument({
+        tenantId,
+        libraryId: params.libraryId,
+        groupId: params.groupId,
+        name: doc.name,
+        mimeType: 'md',
+        size: Buffer.byteLength(doc.content, 'utf8'),
+        buffer: Buffer.from(doc.content, 'utf8'),
+        visibility,
+        tags: params.tags,
+        sourceSessionId: params.sessionId,
+      });
+      documents.push({ id: created.id, name: doc.name });
+      this.logger.log(`来源已提交审核入库：doc=${created.id} lib=${params.libraryId} src=${src.title.slice(0, 40)}`);
+    }
+    return { created: documents.length, documents };
+  }
+
+  /** 审核通过：待审核文档进入学习队列（BullMQ），失败降级同步学习 */
+  async approveReview(documentId: string): Promise<{ id: string; status: string }> {
+    const { tenantId } = this.requireTenant();
+    const detail = await this.store.getDocument(documentId);
+    if (!detail) {
+      throw new BizException(ErrorCode.NOT_FOUND, '文档不存在', HttpStatus.NOT_FOUND);
+    }
+    if (detail.status !== 'PENDING') {
+      throw new BizException(ErrorCode.VALIDATION_FAILED, '该文档不在待审核状态', HttpStatus.BAD_REQUEST);
+    }
+    const buffer = await this.store.getDocumentFile(tenantId, documentId);
+    if (!buffer || buffer.byteLength === 0) {
+      await this.learning.markFailed(tenantId, documentId, '原始内容缺失');
+      throw new BizException(ErrorCode.VALIDATION_FAILED, '原始内容缺失，无法学习', HttpStatus.BAD_REQUEST);
+    }
+    const payload: LearnDocumentPayload = {
+      tenantId,
+      documentId,
+      mimeType: detail.mimeType as DocMimeType,
+    };
+    const submitted = await this.submitLearn(payload);
+    this.logger.log(`审核通过触发学习：doc=${documentId} status=${submitted ? 'LEARNING' : 'FAILED'}`);
+    return { id: documentId, status: submitted ? 'LEARNING' : 'FAILED' };
+  }
+
+  /** 审核拒绝：删除待审核文档（仅来源文本副本，不入库不留文件） */
+  async rejectReview(documentId: string): Promise<{ id: string; rejected: boolean }> {
+    await this.requireTenant();
+    const detail = await this.store.getDocument(documentId);
+    if (!detail) {
+      throw new BizException(ErrorCode.NOT_FOUND, '文档不存在', HttpStatus.NOT_FOUND);
+    }
+    if (detail.status !== 'PENDING') {
+      throw new BizException(ErrorCode.VALIDATION_FAILED, '该文档不在待审核状态', HttpStatus.BAD_REQUEST);
+    }
+    await this.store.deleteDocument(documentId);
+    this.logger.log(`审核拒绝并移除文档：doc=${documentId}`);
+    return { id: documentId, rejected: true };
   }
 }

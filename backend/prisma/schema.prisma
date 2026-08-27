@@ -309,8 +309,10 @@ model KbDocument {
   mimeType   String           @map("mime_type") @db.VarChar(32)
   /// 文件大小（字节）
   size       Int
-  /// 学习状态（状态机）
+  /// 学习状态（状态机；PENDING 对存入文档兼作「待审核」态）
   status     KbDocumentStatus @default(PENDING)
+  /// 文档可见性（智搜入库弹窗选择；检索范围仍由所属库决定）
+  visibility KbVisibility     @default(PRIVATE)
   /// 学习失败原因
   failReason String?          @map("fail_reason") @db.VarChar(512)
   /// 切片数量

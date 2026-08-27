@@ -27,6 +27,6 @@ import { KbRetrieverService } from './retriever/kb.retriever.service';
     ChunkEmbedProcessor,
     KbRetrieverService,
   ],
-  exports: [KbStoreService, KbLearningService, KbRetrieverService],
+  exports: [KbStoreService, KbService, KbLearningService, KbRetrieverService],
 })
 export class KbModule {}

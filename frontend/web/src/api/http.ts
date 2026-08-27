@@ -17,11 +17,15 @@ const SESSION_KEY = 'web.sessionId';
 
 /**
  * 统一请求封装：解析 { code, message, data } 响应体，非 0 业务码抛出 ApiError；
- * 存在本地会话时自动携带 Authorization: Bearer <sessionId>。
+ * 存在本地会话时自动携带 Authorization: Bearer <sessionId>；
+ * FormData 请求体不设置 Content-Type（交由浏览器生成 multipart 边界）。
  */
 export async function request<T>(url: string, init?: RequestInit): Promise<T> {
   const sessionId = localStorage.getItem(SESSION_KEY);
-  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  const headers: Record<string, string> = {};
+  if (!(init?.body instanceof FormData)) {
+    headers['Content-Type'] = 'application/json';
+  }
   if (sessionId) {
     headers.Authorization = `Bearer ${sessionId}`;
   }

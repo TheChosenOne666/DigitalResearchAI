@@ -5,6 +5,7 @@ import {
   extractQueryTerms,
   toIlikePattern,
   localHitUrl,
+  gradeSimilarity,
 } from '../src/modules/kb/retriever/kb.retriever.service';
 
 /** 在租户上下文中执行 */
@@ -239,5 +240,50 @@ describe('KbRetrieverService.search 混合检索', () => {
     const hits = await withTenant(() => svc.search('兜底 内容'));
     expect(hits).toHaveLength(1);
     expect(store.searchChunksFulltext).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('gradeSimilarity 相似度分级（M3.4 召回测试）', () => {
+  it('阈值分档：高 ≥0.7 / 中 ≥0.4 / 低 <0.4', () => {
+    expect(gradeSimilarity(0.95)).toBe('HIGH');
+    expect(gradeSimilarity(0.7)).toBe('HIGH');
+    expect(gradeSimilarity(0.69)).toBe('MID');
+    expect(gradeSimilarity(0.4)).toBe('MID');
+    expect(gradeSimilarity(0.39)).toBe('LOW');
+    expect(gradeSimilarity(0)).toBe('LOW');
+  });
+});
+
+describe('KbRetrieverService.search 限定单库（召回测试）', () => {
+  it('传入 opts.libraryId 后仅该库参与两路检索', async () => {
+    const fulltextRow = (lib: string, doc: string) => ({
+      chunkId: `ck_${doc}`,
+      libraryId: lib,
+      groupId: null,
+      documentId: doc,
+      index: 0,
+      content: '冰川 消融 内容',
+      documentName: `${lib}文档`,
+      matchedTerms: 1,
+    });
+    const { svc, store } = makeRetriever({
+      libs: [
+        { id: 'libA', topK: 10, threshold: 0.4, weight: 1.2 },
+        { id: 'libB', topK: 10, threshold: 0.4, weight: 1.5 },
+      ],
+      embedEnabled: true,
+      qdrantCollections: ['tenant_t1_lib_libA'],
+      qdrantHits: [{ id: 'ckA1', score: 0.9 }],
+      chunksByIds: [{ id: 'ckA1', libraryId: 'libA', groupId: null, documentId: 'dA', index: 2, content: '冰川向量内容', documentName: '冰川报告' }],
+      fulltextRows: [fulltextRow('libA', 'dA'), fulltextRow('libB', 'dB')],
+    });
+    const hits = await withTenant(() =>
+      svc.search('冰川 消融', undefined, { libraryId: 'libA' }),
+    );
+    // 只有 libA 命中进入结果
+    expect(hits.every((h) => h.meta.libraryId === 'libA')).toBe(true);
+    expect(hits).toHaveLength(2);
+    // Qdrant 只查目标库
+    expect(store.getChunksWithDocNames).toHaveBeenCalledWith('t1', ['ckA1']);
   });
 });

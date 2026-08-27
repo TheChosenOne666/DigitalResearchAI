@@ -41,6 +41,8 @@ export interface DocumentListItem {
   mimeType: string;
   size: number;
   status: string;
+  visibility: string;
+  tags: unknown;
   failReason: string | null;
   chunkCount: number;
   createdAt: Date;
@@ -55,10 +57,28 @@ export interface DocumentDetail {
   mimeType: string;
   size: number;
   status: string;
+  visibility: string;
+  tags: unknown;
   failReason: string | null;
   chunkCount: number;
   createdAt: Date;
   chunks: Array<{ id: string; index: number; content: string; vectorId: string | null }>;
+}
+
+/** 待审核队列项（管理端审核列表行） */
+export interface PendingReviewItem {
+  id: string;
+  libraryId: string;
+  groupId: string | null;
+  libraryName: string;
+  groupName: string | null;
+  name: string;
+  mimeType: string;
+  size: number;
+  visibility: string;
+  tags: unknown;
+  sourceSessionId: string | null;
+  createdAt: Date;
 }
 
 /** 创建库入参 */
@@ -302,6 +322,8 @@ export class KbStoreService {
         mimeType: d.mimeType,
         size: d.size,
         status: d.status,
+        visibility: d.visibility,
+        tags: d.tags,
         failReason: d.failReason,
         chunkCount: d.chunkCount,
         createdAt: d.createdAt,
@@ -325,6 +347,8 @@ export class KbStoreService {
       mimeType: doc.mimeType,
       size: doc.size,
       status: doc.status,
+      visibility: doc.visibility,
+      tags: doc.tags,
       failReason: doc.failReason,
       chunkCount: doc.chunkCount,
       createdAt: doc.createdAt,
@@ -357,6 +381,7 @@ export class KbStoreService {
     mimeType: string;
     size: number;
     buffer?: Buffer;
+    visibility?: string;
     tags?: unknown;
     sourceSessionId?: string | null;
   }): Promise<{ id: string }> {
@@ -369,11 +394,54 @@ export class KbStoreService {
         mimeType: input.mimeType,
         size: input.size,
         fileData: input.buffer ? new Uint8Array(input.buffer) : null,
+        visibility: (input.visibility as any) ?? 'PRIVATE',
         tags: input.tags ? (input.tags as any) : undefined,
         sourceSessionId: input.sourceSessionId ?? null,
       },
     });
     return { id: doc.id };
+  }
+
+  /** 待审核文档列表（status=PENDING，含库/分组名），管理端审核队列用 */
+  async listPendingReviews(
+    filter: { libraryId?: string },
+    page: number,
+    pageSize: number,
+  ): Promise<{ items: PendingReviewItem[]; total: number }> {
+    const { tenantId } = this.requireTenant();
+    const where: Prisma.KbDocumentWhereInput = { status: 'PENDING' };
+    if (filter.libraryId) where.libraryId = filter.libraryId;
+    const skip = Math.max(0, (page - 1) * pageSize);
+    const [docs, total] = await Promise.all([
+      this.prisma.forTenant.kbDocument.findMany({
+        where,
+        orderBy: { createdAt: 'asc' },
+        skip,
+        take: pageSize,
+        include: {
+          library: { select: { name: true } },
+          group: { select: { name: true } },
+        },
+      }),
+      this.prisma.forTenant.kbDocument.count({ where }),
+    ]);
+    return {
+      items: docs.map((d) => ({
+        id: d.id,
+        libraryId: d.libraryId,
+        groupId: d.groupId,
+        libraryName: d.library.name,
+        groupName: d.group?.name ?? null,
+        name: d.name,
+        mimeType: d.mimeType,
+        size: d.size,
+        visibility: d.visibility,
+        tags: d.tags,
+        sourceSessionId: d.sourceSessionId,
+        createdAt: d.createdAt,
+      })),
+      total,
+    };
   }
 
   /** 回读文档原始文件字节（重学/中断续学用；系统 client，显式 tenantId） */

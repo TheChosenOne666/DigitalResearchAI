@@ -1,7 +1,9 @@
 import {
+  Body,
   Controller,
   Get,
   HttpCode,
+  HttpStatus,
   Param,
   Post,
   Query,
@@ -10,6 +12,8 @@ import {
 } from '@nestjs/common';
 import type { Response } from 'express';
 import type { AuthenticatedRequest } from '../../common/auth/session-auth.guard';
+import { BizException } from '../../common/exceptions/biz.exception';
+import { ErrorCode } from '@app/shared';
 import type {
   ConnectorInput,
   SearchConditions,
@@ -21,6 +25,7 @@ import { SearchService } from './search.service';
 import { IntentService } from './intent/intent.service';
 import { GenerateService } from './generate/generate.service';
 import { SearchStoreService } from './persistence/search.store.service';
+import { KbService } from '../kb/kb.service';
 import {
   serializeSse,
   type SseCondFill,
@@ -54,10 +59,21 @@ function parseConditions(raw?: string): SearchConditions {
   }
 }
 
+/** 智搜来源存入知识库入参 */
+export interface SaveToKbBody {
+  /** 勾选来源的序号（即报告内 idx，与 SSE 来源卡编号一致） */
+  idxs?: unknown;
+  libraryId?: string;
+  groupId?: string | null;
+  visibility?: string;
+  tags?: unknown;
+}
+
 /**
  * 智搜控制器（M2 核心：GET /search/stream 一次请求 → SSE 长连接 → 五阶段事件流式推送）。
  * 阶段：intent(意图分类) → searching(检索) → fusing(融合) → generating(LLM 流式生成) → done；
  * 会话/报告/来源/用量落库(M2.3)，客户端断开 → AbortController 全链路取消。
+ * M3.4：save-kb 桩替换为真实入库链路（勾选来源逐条存入知识库，待审核）。
  */
 @Controller('search')
 export class SearchController {
@@ -66,6 +82,7 @@ export class SearchController {
     private readonly intent: IntentService,
     private readonly generate: GenerateService,
     private readonly store: SearchStoreService,
+    private readonly kb: KbService,
   ) {}
 
   @Get('stream')
@@ -194,10 +211,51 @@ export class SearchController {
     return this.store.reportDetail(id);
   }
 
+  /**
+   * 智搜勾选来源存入知识库（M3.4）：每条来源独立生成一份 Markdown 文档，
+   * 落目标库/分组，状态 PENDING 待审核；审核通过后自动学习（管理端雏形接口）。
+   */
   @Post('reports/:id/save-kb')
-  @HttpCode(501)
-  saveToKb(): { note: string } {
-    // M3 知识库接入后实现（智搜勾选来源存库）
-    return { note: 'M3 接入知识库存入链路' };
+  @HttpCode(HttpStatus.CREATED)
+  async saveToKb(
+    @Param('id') sessionId: string,
+    @Body() body: SaveToKbBody,
+  ): Promise<unknown> {
+    const idxs = Array.isArray(body?.idxs)
+      ? [...new Set(body.idxs.map(Number).filter((n) => Number.isInteger(n) && n >= 0))]
+      : [];
+    if (!idxs.length) {
+      throw new BizException(ErrorCode.VALIDATION_FAILED, '请先勾选要存入的来源', HttpStatus.BAD_REQUEST);
+    }
+    if (!body?.libraryId || typeof body.libraryId !== 'string') {
+      throw new BizException(ErrorCode.PARAM_MISSING, '缺少目标知识库', HttpStatus.BAD_REQUEST);
+    }
+    // 会话归属校验与来源读取（跨租户/不存在 → 404）
+    const detail = await this.store.reportDetail(sessionId);
+    const selected = detail.sources
+      .filter((s) => idxs.includes(s.idx))
+      .map((s) => ({
+        idx: s.idx,
+        title: s.title,
+        url: s.url ?? null,
+        snippet: s.snippet,
+        sourceType: s.sourceType,
+      }));
+    if (!selected.length) {
+      throw new BizException(ErrorCode.VALIDATION_FAILED, '所选来源不存在于该报告', HttpStatus.BAD_REQUEST);
+    }
+    const snap = (detail.paramsSnapshot ?? {}) as { question?: string };
+    const tags = Array.isArray(body.tags)
+      ? body.tags.filter((t): t is string => typeof t === 'string' && t.trim().length > 0).slice(0, 10)
+      : [];
+    return this.kb.saveSourcesToLibrary({
+      libraryId: body.libraryId,
+      groupId: typeof body.groupId === 'string' && body.groupId ? body.groupId : null,
+      visibility: body.visibility === 'PUBLIC' ? 'PUBLIC' : 'PRIVATE',
+      tags,
+      sessionId,
+      question: snap.question ?? null,
+      sources: selected,
+    });
   }
 }

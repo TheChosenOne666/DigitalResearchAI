@@ -57,6 +57,20 @@ export function localHitUrl(
   return `kb://${libraryId}/${documentId}/${index}`;
 }
 
+/** 相似度分级（召回测试展示用） */
+export type RecallGrade = 'HIGH' | 'MID' | 'LOW';
+
+/** 相似度分级阈值：高 ≥0.7 / 中 ≥0.4 / 低 <0.4 */
+export const RECALL_GRADE_HIGH = 0.7;
+export const RECALL_GRADE_MID = 0.4;
+
+/** 按相似度打分档（纯函数，供召回测试与单测复用） */
+export function gradeSimilarity(score: number): RecallGrade {
+  if (score >= RECALL_GRADE_HIGH) return 'HIGH';
+  if (score >= RECALL_GRADE_MID) return 'MID';
+  return 'LOW';
+}
+
 /** 渠道内部切片命中（向量/全文统一中间形态，映射 SearchHit 前使用） */
 interface InternalChunk {
   chunkId: string;
@@ -107,11 +121,17 @@ export class KbRetrieverService {
    * 执行混合检索，返回统一 SearchHit；单路内部异常仅降级告警不抛出。
    * @param question 用户问题
    * @param signal 外部 AbortSignal（问题向量化请求联动取消）
+   * @param opts.libraryId 限定单一库检索（召回测试用）；缺省遍历租户全部库
    */
-  async search(question: string, signal?: AbortSignal): Promise<SearchHit[]> {
+  async search(
+    question: string,
+    signal?: AbortSignal,
+    opts?: { libraryId?: string },
+  ): Promise<SearchHit[]> {
     const tenantId = this.requireTenant();
     if (!question.trim()) return [];
-    const libs = await this.store.listLibraryRetrievalConfigs(tenantId);
+    let libs = await this.store.listLibraryRetrievalConfigs(tenantId);
+    if (opts?.libraryId) libs = libs.filter((lib) => lib.id === opts.libraryId);
     if (!libs.length) return [];
 
     // 两路并发取候选（各自内部吞错降级）

@@ -17,6 +17,10 @@ async function onLogout(): Promise<void> {
 function goSearch(): void {
   router.push('/search');
 }
+
+function goKnowledge(): void {
+  router.push('/knowledge');
+}
 </script>
 
 <template>
@@ -37,6 +41,7 @@ function goSearch(): void {
           <el-button type="primary" size="large" @click="goSearch">
             进入智搜
           </el-button>
+          <el-button size="large" @click="goKnowledge">知识库</el-button>
           <div class="user-chip">
             <span class="user-name">{{ session.user.nickname }}</span>
             <span class="user-phone">{{ session.user.phone.replace(/(\d{3})\d{4}(\d{4})/, '$1****$2') }}</span>

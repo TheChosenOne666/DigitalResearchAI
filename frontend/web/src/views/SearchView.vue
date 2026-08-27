@@ -14,6 +14,13 @@ import {
   type SessionListItem,
   type SseSource,
 } from '@/api/search';
+import {
+  listLibraries,
+  listGroups,
+  saveSourcesToKb,
+  type KbLibrary,
+  type KbGroup,
+} from '@/api/kb';
 
 const router = useRouter();
 const session = useSessionStore();
@@ -59,6 +66,90 @@ const doneInfo = ref<{ sessionId: string; reportId: string } | null>(null);
 
 const abortCtrl = ref<AbortController | null>(null);
 
+/** ===== 来源勾选 + 存入知识库（M3.4）===== */
+
+/** 勾选待存库的来源 idx（默认全部勾选，可取消） */
+const checkedIdxs = ref<Set<number>>(new Set());
+
+/** 切换某条来源的勾选态 */
+function toggleCheck(idx: number): void {
+  const next = new Set(checkedIdxs.value);
+  if (next.has(idx)) next.delete(idx);
+  else next.add(idx);
+  checkedIdxs.value = next;
+}
+
+const checkedCount = computed(() => checkedIdxs.value.size);
+
+/** 「存入知识库」可用：检索已完成且有来源 */
+const canSaveKb = computed(() => !running.value && !!doneInfo.value?.sessionId && sources.value.length > 0);
+
+const saveVisible = ref(false);
+const saving = ref(false);
+const saveForm = reactive({
+  libraryId: '',
+  groupId: '',
+  visibility: 'PRIVATE',
+  tags: '',
+});
+const kbLibs = ref<KbLibrary[]>([]);
+const kbGroups = ref<KbGroup[]>([]);
+
+async function openSaveDialog(): Promise<void> {
+  if (!doneInfo.value?.sessionId) {
+    ElMessage.warning('请先完成一次智搜');
+    return;
+  }
+  if (!checkedCount.value) {
+    ElMessage.warning('请先在右侧来源面板勾选要存入知识库的来源');
+    return;
+  }
+  try {
+    if (!kbLibs.value.length) kbLibs.value = await listLibraries();
+  } catch (e) {
+    ElMessage.error(e instanceof Error ? e.message : '知识库列表加载失败');
+    return;
+  }
+  saveForm.groupId = '';
+  saveForm.tags = '';
+  saveForm.libraryId = kbLibs.value.length === 1 ? kbLibs.value[0].id : '';
+  saveVisible.value = true;
+}
+
+/** 弹窗内切换目标库 → 联动加载分组 */
+async function onSaveLibChange(): Promise<void> {
+  saveForm.groupId = '';
+  kbGroups.value = saveForm.libraryId ? await listGroups(saveForm.libraryId) : [];
+}
+
+async function submitSaveKb(): Promise<void> {
+  if (!saveForm.libraryId) {
+    ElMessage.warning('请选择目标知识库');
+    return;
+  }
+  if (!doneInfo.value?.sessionId) return;
+  saving.value = true;
+  try {
+    const tags = saveForm.tags
+      .split(/[,，]/)
+      .map((t) => t.trim())
+      .filter(Boolean);
+    const r = await saveSourcesToKb(doneInfo.value.sessionId, {
+      idxs: [...checkedIdxs.value],
+      libraryId: saveForm.libraryId,
+      groupId: saveForm.groupId || null,
+      visibility: saveForm.visibility,
+      tags,
+    });
+    saveVisible.value = false;
+    ElMessage.success(`已提交管理员审核（${r.created} 条来源），审核通过后自动学习入库`);
+  } catch (e) {
+    ElMessage.error(e instanceof Error ? e.message : '存入失败');
+  } finally {
+    saving.value = false;
+  }
+}
+
 /** 当前阶段序号 */
 const stageIndex = computed(
   () => Math.max(0, STAGES.findIndex((s) => s.key === stage.value)),
@@ -86,6 +177,7 @@ function resetResult(): void {
   doneInfo.value = null;
   activeCite.value = null;
   conditionsFilled.value = false;
+  checkedIdxs.value = new Set();
   showResult.value = true;
 }
 
@@ -129,6 +221,8 @@ function startSearch(): void {
       },
       onSource: (s) => {
         sources.value.push(s);
+        // 来源默认勾选（供「存入知识库」使用，可手动取消）
+        checkedIdxs.value = new Set([...checkedIdxs.value, s.idx]);
       },
       onReportChunk: (c) => {
         reportText.value += c.text;
@@ -217,6 +311,9 @@ async function openHistoryItem(item: SessionListItem): Promise<void> {
       sourceType: s.sourceType,
       isCited: s.isCited,
     }));
+    // 历史报告同样可勾选来源存入知识库
+    doneInfo.value = { sessionId: item.id, reportId: detail.id };
+    checkedIdxs.value = new Set(sources.value.map((s) => s.idx));
     stage.value = 'done';
     running.value = false;
     showResult.value = true;
@@ -377,8 +474,22 @@ onBeforeUnmount(() => abortCtrl.value?.abort());
         <aside class="source-pane">
           <div class="source-head">
             <span>{{ hasCond ? '已回填条件' : '来源与条件' }}</span>
-            <span v-if="sources.length" class="source-count">{{ sources.length }} 条</span>
+            <span v-if="sources.length" class="source-count">
+              {{ checkedCount }}/{{ sources.length }} 条
+            </span>
           </div>
+
+          <!-- 存入知识库（M3.4：勾选来源逐条入库待审核） -->
+          <el-button
+            class="save-kb-btn"
+            type="primary"
+            plain
+            size="small"
+            :disabled="!canSaveKb || !checkedCount"
+            @click="openSaveDialog"
+          >
+            ⬇ 存入知识库（{{ checkedCount }}）
+          </el-button>
 
           <!-- 条件快照 -->
           <div v-if="hasCond" class="cond-snapshot">
@@ -417,6 +528,12 @@ onBeforeUnmount(() => abortCtrl.value?.abort());
               @click="onSourceClick(s.idx)"
             >
               <div class="src-top">
+                <el-checkbox
+                  class="src-check"
+                  :model-value="checkedIdxs.has(s.idx)"
+                  @click.stop
+                  @change="toggleCheck(s.idx)"
+                />
                 <span class="src-idx">{{ s.idx }}</span>
                 <span class="src-type">{{ sourceTypeLabel(s.sourceType) }}</span>
                 <span v-if="s.isCited" class="src-cited-badge">引用</span>
@@ -453,6 +570,54 @@ onBeforeUnmount(() => abortCtrl.value?.abort());
         <p class="empty-sub">输入问题 → 多源检索 → 智能分析 → 结构化报告</p>
       </section>
     </main>
+
+    <!-- 存入知识库弹窗（M3.4：勾选来源逐条转为 Markdown 文档，待审核） -->
+    <el-dialog v-model="saveVisible" title="存入知识库" width="480px">
+      <div class="save-hint">
+        将右侧勾选的 <b>{{ checkedCount }}</b> 条来源逐条转为 Markdown 文档，
+        提交后进入管理员审核，审核通过后自动学习入库并参与本地检索。
+      </div>
+      <div class="field">
+        <label>目标知识库</label>
+        <el-select
+          v-model="saveForm.libraryId"
+          placeholder="选择知识库"
+          style="width: 100%"
+          @change="onSaveLibChange"
+        >
+          <el-option v-for="lib in kbLibs" :key="lib.id" :label="lib.name" :value="lib.id" />
+        </el-select>
+      </div>
+      <div class="field">
+        <label>目标分组（可选）</label>
+        <el-select
+          v-model="saveForm.groupId"
+          placeholder="不指定分组"
+          clearable
+          style="width: 100%"
+          :disabled="!saveForm.libraryId"
+        >
+          <el-option v-for="g in kbGroups" :key="g.id" :label="g.name" :value="g.id" />
+        </el-select>
+      </div>
+      <div class="field">
+        <label>可见性</label>
+        <el-radio-group v-model="saveForm.visibility">
+          <el-radio value="PRIVATE">私有</el-radio>
+          <el-radio value="PUBLIC">公共</el-radio>
+        </el-radio-group>
+      </div>
+      <div class="field">
+        <label>标签（可选，逗号分隔）</label>
+        <el-input v-model="saveForm.tags" placeholder="如：宏观经济, GDP" maxlength="80" />
+      </div>
+      <template #footer>
+        <el-button @click="saveVisible = false">取消</el-button>
+        <el-button type="primary" :loading="saving" @click="submitSaveKb">
+          提交审核（{{ checkedCount }} 条）
+        </el-button>
+      </template>
+    </el-dialog>
 
     <!-- 历史记录抽屉 -->
     <el-drawer v-model="historyVisible" title="历史记录" size="360px" :with-header="true">
@@ -909,6 +1074,30 @@ onBeforeUnmount(() => abortCtrl.value?.abort());
   gap: 12px;
   font-size: 12px;
   color: #94a3b8;
+}
+
+/* ---- 存入知识库弹窗 ---- */
+
+.save-hint {
+  padding: 10px 14px;
+  border-radius: 10px;
+  background: #eff6ff;
+  border: 1px solid #bfdbfe;
+  color: #1d4ed8;
+  font-size: 12.5px;
+  line-height: 1.7;
+  margin-bottom: 16px;
+}
+
+.field {
+  margin-bottom: 14px;
+}
+
+.field label {
+  display: block;
+  font-size: 12.5px;
+  color: #64748b;
+  margin-bottom: 6px;
 }
 
 @media (max-width: 960px) {

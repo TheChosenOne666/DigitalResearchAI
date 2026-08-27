@@ -1,5 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { SearchController } from '../src/modules/search/search.controller';
+import { BizException } from '../src/common/exceptions/biz.exception';
+import { ErrorCode } from '@app/shared';
 import type { AuthenticatedRequest } from '../src/common/auth/session-auth.guard';
 
 /** 假 Response：收集 SSE 帧 */
@@ -40,8 +42,15 @@ function deps() {
     listSessions: vi.fn(),
     reportDetail: vi.fn(),
   };
-  const ctrl = new SearchController(search as any, intent as any, generate as any, store as any);
-  return { ctrl, search, intent, generate, store };
+  const kb = { saveSourcesToLibrary: vi.fn() };
+  const ctrl = new SearchController(
+    search as any,
+    intent as any,
+    generate as any,
+    store as any,
+    kb as any,
+  );
+  return { ctrl, search, intent, generate, store, kb };
 }
 
 describe('SearchController.stream', () => {
@@ -153,5 +162,68 @@ describe('SearchController.histories / reportDetail', () => {
     const r = await ctrl.reportDetail(req(), 'sid');
     expect(r).toEqual({ id: 'r1' });
     expect(store.reportDetail).toHaveBeenCalledWith('sid');
+  });
+});
+
+describe('SearchController.saveToKb（M3.4 入库链路）', () => {
+  const reportDetailStub = {
+    id: 'r1',
+    contentMd: '# 报告',
+    paramsSnapshot: { question: '美国 GDP', mode: 'hybrid', conditions: {} },
+    tokenUsage: 8,
+    createdAt: new Date(),
+    sources: [
+      { idx: 0, title: '来源A', url: 'https://a', snippet: '摘A', sourceType: 'web', isCited: true },
+      { idx: 1, title: '来源B', url: null, snippet: '摘B', sourceType: 'vertical', isCited: false },
+    ],
+  };
+
+  it('勾选来源逐条入库：映射字段并携带问题快照/可见性/标签', async () => {
+    const { ctrl, store, kb } = deps();
+    store.reportDetail.mockResolvedValue(reportDetailStub);
+    kb.saveSourcesToLibrary.mockResolvedValue({ created: 1, documents: [{ id: 'kd1', name: '来源A.md' }] });
+
+    const r = await ctrl.saveToKb('s1', {
+      idxs: [0],
+      libraryId: 'lib1',
+      groupId: null,
+      visibility: 'PUBLIC',
+      tags: ['宏观', 'GDP'],
+    });
+
+    expect(kb.saveSourcesToLibrary).toHaveBeenCalledWith(
+      expect.objectContaining({
+        libraryId: 'lib1',
+        groupId: null,
+        visibility: 'PUBLIC',
+        tags: ['宏观', 'GDP'],
+        sessionId: 's1',
+        question: '美国 GDP',
+        sources: [{ idx: 0, title: '来源A', url: 'https://a', snippet: '摘A', sourceType: 'web' }],
+      }),
+    );
+    expect(r).toEqual({ created: 1, documents: [{ id: 'kd1', name: '来源A.md' }] });
+  });
+
+  it('未勾选来源抛校验异常，不触库查询', async () => {
+    const { ctrl, store, kb } = deps();
+    await expect(ctrl.saveToKb('s1', { idxs: [], libraryId: 'lib1' })).rejects.toThrow(/请先勾选/);
+    await expect(ctrl.saveToKb('s1', { idxs: ['x'], libraryId: 'lib1' })).rejects.toThrow(/请先勾选/);
+    expect(store.reportDetail).not.toHaveBeenCalled();
+    expect(kb.saveSourcesToLibrary).not.toHaveBeenCalled();
+  });
+
+  it('缺目标库 / 报告不存在 / 来源序号不匹配分别报错', async () => {
+    const { ctrl, store, kb } = deps();
+    await expect(ctrl.saveToKb('s1', { idxs: [0] })).rejects.toThrow(/目标知识库/);
+    // 报告不存在：store 层抛 404 业务异常
+    store.reportDetail.mockRejectedValue(new BizException(ErrorCode.NOT_FOUND, '报告不存在', 404));
+    await expect(ctrl.saveToKb('s1', { idxs: [0], libraryId: 'lib1' })).rejects.toThrow(/报告不存在/);
+    store.reportDetail.mockResolvedValue(reportDetailStub);
+    await expect(ctrl.saveToKb('s1', { idxs: [9], libraryId: 'lib1' })).rejects.toThrow(
+      /所选来源不存在/,
+    );
+    expect(store.reportDetail).toHaveBeenCalledTimes(2);
+    expect(kb.saveSourcesToLibrary).not.toHaveBeenCalled();
   });
 });

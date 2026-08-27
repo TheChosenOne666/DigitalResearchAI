@@ -15,8 +15,14 @@ import {
 import { FileInterceptor } from '@nestjs/platform-express';
 import { ErrorCode } from '@app/shared';
 import { BizException } from '../../common/exceptions/biz.exception';
+import { RoleCode, Roles } from '../../common/auth/roles.decorator';
 import { KbService } from './kb.service';
 import { KbStoreService } from './store/kb.store.service';
+import {
+  LOCAL_MAX_HITS,
+  gradeSimilarity,
+  KbRetrieverService,
+} from './retriever/kb.retriever.service';
 import type {
   GroupInput,
   LibraryInput,
@@ -28,6 +34,20 @@ import type {
 const DEFAULT_PAGE_SIZE = 10;
 const MAX_PAGE_SIZE = 50;
 
+/** 召回测试入参 */
+export interface RecallTestInput {
+  question?: string;
+  topN?: number;
+}
+
+/** 智搜来源存入知识库入参 */
+export interface SaveToKbInput {
+  libraryId?: string;
+  groupId?: string | null;
+  visibility?: string;
+  tags?: unknown;
+}
+
 /** 上传文件最小形状（避免依赖 @types/multer） */
 interface UploadedDoc {
   originalname: string;
@@ -35,15 +55,16 @@ interface UploadedDoc {
 }
 
 /**
- * 知识库控制器（M3.1：库/分组/文档 CRUD）。
- * 文档上传与学习队列在 M3.2 接入；召回测试与入库链路在 M3.4 实现。
- * 全部路由受租户行级隔离保护（prisma forTenant 自动注入 tenant_id）。
+ * 知识库控制器（M3.1 库/分组/文档 CRUD → M3.2 上传/重学 → M3.4 召回测试 + 审核队列）。
+ * 全部路由受租户行级隔离保护（prisma forTenant 自动注入 tenant_id）；
+ * 审核三端点限 DATA_ADMIN / PLATFORM_ADMIN。
  */
 @Controller('kb')
 export class KbController {
   constructor(
     private readonly store: KbStoreService,
     private readonly kb: KbService,
+    private readonly retriever: KbRetrieverService,
   ) {}
 
   // ===== 库 =====
@@ -165,5 +186,73 @@ export class KbController {
   @HttpCode(HttpStatus.OK)
   deleteDocument(@Param('id') id: string) {
     return this.store.deleteDocument(id);
+  }
+
+  // ===== 召回测试（M3.4）=====
+
+  /** 召回测试：单库混合检索 → 命中片段 + 相似度分级（高 ≥0.7 / 中 ≥0.4 / 低 <0.4） */
+  @Post('libraries/:id/recall-test')
+  @HttpCode(HttpStatus.OK)
+  async recallTest(@Param('id') id: string, @Body() body: RecallTestInput) {
+    const lib = await this.store.getLibrary(id);
+    if (!lib) {
+      throw new BizException(ErrorCode.NOT_FOUND, '知识库不存在', HttpStatus.NOT_FOUND);
+    }
+    const question = (body?.question ?? '').trim();
+    if (!question) {
+      throw new BizException(ErrorCode.VALIDATION_FAILED, '请输入测试问题', HttpStatus.BAD_REQUEST);
+    }
+    const topN = Math.min(LOCAL_MAX_HITS, Math.max(1, Number(body?.topN) || 8));
+    const startedAt = Date.now();
+    const hits = await this.retriever.search(question, undefined, { libraryId: id });
+    return {
+      question,
+      tookMs: Date.now() - startedAt,
+      total: hits.length,
+      hits: hits.slice(0, topN).map((hit, order) => ({
+        order: order + 1,
+        title: hit.title,
+        snippet: hit.snippet,
+        contentMd: hit.contentMd ?? '',
+        similarity: hit.rawScore ?? 0,
+        grade: gradeSimilarity(hit.rawScore ?? 0),
+        libraryId: (hit.meta as { libraryId?: string } | undefined)?.libraryId ?? null,
+        groupId: (hit.meta as { groupId?: string | null } | undefined)?.groupId ?? null,
+        documentId: (hit.meta as { documentId?: string } | undefined)?.documentId ?? null,
+        chunkIndex: (hit.meta as { idx?: number } | undefined)?.idx ?? null,
+      })),
+    };
+  }
+
+  // ===== 审核队列（M3.4，管理端雏形；管理页 UI 归 M6）=====
+
+  /** 待审核文档列表（来源存入后停留 PENDING） */
+  @Get('reviews')
+  @Roles(RoleCode.DATA_ADMIN, RoleCode.PLATFORM_ADMIN)
+  @HttpCode(HttpStatus.OK)
+  listReviews(
+    @Query('libraryId') libraryId?: string,
+    @Query('page') page = '1',
+    @Query('pageSize') pageSize = String(DEFAULT_PAGE_SIZE),
+  ) {
+    const p = Math.max(1, Number(page) || 1);
+    const size = Math.min(MAX_PAGE_SIZE, Math.max(1, Number(pageSize) || DEFAULT_PAGE_SIZE));
+    return this.store.listPendingReviews({ libraryId }, p, size);
+  }
+
+  /** 审核通过：触发自动学习（入 BullMQ 队列，队列不可用降级同步学习） */
+  @Post('documents/:id/approve')
+  @Roles(RoleCode.DATA_ADMIN, RoleCode.PLATFORM_ADMIN)
+  @HttpCode(HttpStatus.OK)
+  approveReview(@Param('id') id: string) {
+    return this.kb.approveReview(id);
+  }
+
+  /** 审核拒绝：移除待审核文档 */
+  @Post('documents/:id/reject')
+  @Roles(RoleCode.DATA_ADMIN, RoleCode.PLATFORM_ADMIN)
+  @HttpCode(HttpStatus.OK)
+  rejectReview(@Param('id') id: string) {
+    return this.kb.rejectReview(id);
   }
 }
