@@ -4,6 +4,7 @@ import {
   resolveCountryCodes,
   resolveIndicatorCodes,
 } from '../search/connectors/vertical.connector';
+import { parseTimeseries, type UploadedDataset } from './upload-parser';
 
 /** 单条时序序列（某国家在某指标下的逐年值） */
 export interface DatasetSeries {
@@ -106,5 +107,19 @@ export class WorkspaceService {
       years: [...yearSet].sort(),
       source: '世界发展指标数据库（WDI）',
     };
+  }
+
+  /**
+   * 解析上传的 Excel/CSV 为时序数据集（M4.2 上传补充）。
+   * 仅解析不落库，返回结构化行供前端并入当前表格与筛选。
+   * @param mimeType 文件 mime 类型（xlsx / csv）
+   * @param buffer 文件原始字节
+   */
+  async upload(mimeType: 'xlsx' | 'csv', buffer: Buffer): Promise<UploadedDataset> {
+    const result = await parseTimeseries(mimeType, buffer);
+    this.logger.log(
+      `上传补充解析完成：${result.rows.length} 行 × ${result.years.length} 年`,
+    );
+    return result;
   }
 }

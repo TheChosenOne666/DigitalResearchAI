@@ -1,6 +1,26 @@
-import { Controller, Get, HttpCode, HttpStatus, Query, Req } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  HttpCode,
+  HttpStatus,
+  Post,
+  Query,
+  Req,
+  UploadedFile,
+  UseInterceptors,
+} from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import type { Request } from 'express';
+import { BizException } from '../../common/exceptions/biz.exception';
+import { ErrorCode } from '@app/shared';
 import { WorkspaceService } from './workspace.service';
+import { detectMimeType } from '../kb/parse/doc-parser.service';
+
+/** 上传文件最小形状（避免依赖 @types/multer） */
+interface UploadedFileShape {
+  originalname: string;
+  buffer: Buffer;
+}
 
 /** 逗号分隔列表解析（兼容 query 重复参数产生的数组；空串/缺省 → 空数组） */
 function splitList(raw?: string | string[]): string[] {
@@ -45,5 +65,27 @@ export class WorkspaceController {
     const ac = new AbortController();
     req.on('close', () => ac.abort());
     return this.workspace.getDataset(countryList, indicatorList, from, to, ac.signal);
+  }
+
+  @Post('upload')
+  @HttpCode(HttpStatus.OK)
+  @UseInterceptors(
+    FileInterceptor('file', {
+      limits: { fileSize: 20 * 1024 * 1024 },
+    }),
+  )
+  async upload(@UploadedFile() file?: UploadedFileShape): Promise<unknown> {
+    if (!file) {
+      throw new BizException(ErrorCode.PARAM_MISSING, '缺少上传文件', HttpStatus.BAD_REQUEST);
+    }
+    const mime = detectMimeType(file.originalname);
+    if (mime !== 'xlsx' && mime !== 'csv') {
+      throw new BizException(
+        ErrorCode.VALIDATION_FAILED,
+        '仅支持 Excel（.xlsx / .xls）或 CSV 文件',
+        HttpStatus.BAD_REQUEST,
+      );
+    }
+    return this.workspace.upload(mime, file.buffer);
   }
 }

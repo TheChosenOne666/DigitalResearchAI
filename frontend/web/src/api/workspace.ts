@@ -5,6 +5,8 @@ export interface DatasetSeries {
   country: string;
   iso3: string;
   values: Record<string, number>;
+  /** 数据来源标注（上传补充行标记本地文件名，WDI 行缺省回退全局 source） */
+  source?: string;
 }
 
 /** 单个指标的时序数据集 */
@@ -36,4 +38,19 @@ export async function fetchDataset(params: {
   query.set('yearFrom', String(params.yearFrom));
   query.set('yearTo', String(params.yearTo));
   return request(`/api/v1/workspace/dataset?${query.toString()}`);
+}
+
+/** 上传文件解析结果 */
+export interface UploadedDataset {
+  rows: Array<{ name: string; values: Record<string, number> }>;
+  years: string[];
+}
+
+/**
+ * 上传 Excel/CSV 补充数据（M4.2）：解析宽表（首列实体名、表头年份）为时序行。
+ */
+export function uploadDataset(file: File): Promise<UploadedDataset> {
+  const fd = new FormData();
+  fd.append('file', file);
+  return request('/api/v1/workspace/upload', { method: 'POST', body: fd });
 }

@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { ElMessage } from 'element-plus';
+import * as echarts from 'echarts';
 import TopNav from '@/components/TopNav.vue';
-import { fetchDataset, type DatasetResult } from '@/api/workspace';
+import { fetchDataset, uploadDataset, type DatasetResult, type DatasetSeries } from '@/api/workspace';
 
 // ===== 指标/国家字典（对齐后端 vertical.connector 的 COUNTRY_ISO3 / INDICATOR_WDI 中文名） =====
 
@@ -50,10 +51,70 @@ const expanded = ref<string | null>(null);
 const keyword = ref('');
 
 const curIndicator = computed(() => INDICATORS.find((i) => i.id === indicator.value));
-const years = computed(() => dataset.value?.years ?? []);
-const series = computed(() => dataset.value?.indicators[0]?.series ?? []);
 
-/** 已选国家计数（用于筛选面板） */
+// ===== 上传补充（M4.2）=====
+
+interface UploadedFileData {
+  filename: string;
+  rows: Array<{ name: string; values: Record<string, number> }>;
+  years: string[];
+}
+
+/** 已上传并并入的本地文件（会话态，不落库） */
+const uploadedFiles = ref<UploadedFileData[]>([]);
+const uploadVisible = ref(false);
+const pendingFiles = ref<File[]>([]);
+const uploading = ref(false);
+
+/** 上传引入的实体名（追加到国家筛选列表） */
+const uploadedEntities = computed(() => {
+  const names: string[] = [];
+  for (const uf of uploadedFiles.value) {
+    for (const r of uf.rows) {
+      if (!names.includes(r.name)) names.push(r.name);
+    }
+  }
+  return names;
+});
+
+/** 国家筛选选项 = 内置国家 + 上传实体 */
+const countryOptions = computed(() => [...ALL_COUNTRIES, ...uploadedEntities.value]);
+
+/**
+ * 合并后的时序序列：WDI 序列 + 上传文件行（同名实体合并填充、新实体追加）。
+ * 上传仅并入当前指标视图（切换指标后以 WDI 数据为准）。
+ */
+const series = computed<DatasetSeries[]>(() => {
+  const base = dataset.value?.indicators[0]?.series ?? [];
+  const merged = base.map((s) => ({ ...s }));
+  for (const uf of uploadedFiles.value) {
+    for (const row of uf.rows) {
+      const hit = merged.find((s) => s.country === row.name);
+      if (hit) {
+        hit.values = { ...hit.values, ...row.values };
+        hit.source = hit.source ?? `本地文件 · ${uf.filename}`;
+      } else {
+        merged.push({ country: row.name, iso3: '', values: { ...row.values }, source: `本地文件 · ${uf.filename}` });
+      }
+    }
+  }
+  return merged;
+});
+
+/** 年份 = WDI 年份 ∪ 上传年份（升序） */
+const years = computed(() => {
+  const set = new Set<string>(dataset.value?.years ?? []);
+  for (const uf of uploadedFiles.value) {
+    for (const y of uf.years) set.add(y);
+  }
+  return [...set].sort((a, b) => Number(a) - Number(b));
+});
+
+const sourceLabel = computed(() => {
+  if (dataset.value?.source) return dataset.value.source;
+  return uploadedFiles.value.length ? '本地文件补充' : '世界发展指标数据库（WDI）';
+});
+
 const selCount = computed(() => selectedCountries.value.length);
 
 // ===== 数据加载 =====
@@ -68,7 +129,7 @@ async function load(): Promise<void> {
   loading.value = true;
   try {
     dataset.value = await fetchDataset({
-      countries: selectedCountries.value,
+      countries: selectedCountries.value.filter((c) => ALL_COUNTRIES.includes(c)),
       indicators: [indicator.value],
       yearFrom: yearFrom.value,
       yearTo: yearTo.value,
@@ -98,7 +159,6 @@ function clampYears(): void {
 
 // ===== 表格行计算 =====
 
-/** 指标名称 → 后端 series.country 的映射（后端按输入中文名回显） */
 const rows = computed(() => {
   let list = series.value.filter((s) => selectedCountries.value.includes(s.country));
   if (keyword.value.trim()) {
@@ -154,7 +214,7 @@ function toggleCountry(name: string): void {
 }
 
 function selectAll(): void {
-  selectedCountries.value = [...ALL_COUNTRIES];
+  selectedCountries.value = [...countryOptions.value];
   scheduleLoad();
 }
 
@@ -166,7 +226,7 @@ function clearAll(): void {
 // ===== 底部操作：CSV 下载 =====
 
 function downloadCsv(): void {
-  if (!dataset.value || !rows.value.length) {
+  if (!rows.value.length) {
     ElMessage.warning('暂无数据可下载');
     return;
   }
@@ -186,13 +246,276 @@ function downloadCsv(): void {
   ElMessage.success('已导出 CSV 文件');
 }
 
-/** M4.2–M4.4 占位功能 */
+/** M4.3–M4.4 占位功能 */
 function comingSoon(name: string): void {
   ElMessage.info(`「${name}」将在后续批次开放`);
 }
 
+// ===== 上传补充（M4.2）=====
+
+function openUpload(): void {
+  pendingFiles.value = [];
+  uploadVisible.value = true;
+}
+
+function onPickFiles(e: Event): void {
+  const input = e.target as HTMLInputElement;
+  if (!input.files) return;
+  const arr = Array.from(input.files);
+  if (!arr.length) return;
+  pendingFiles.value.push(...arr);
+  ElMessage.success(`已选择 ${arr.length} 个文件，点击「完成」并入数据分析`);
+  input.value = '';
+}
+
+function onDropFiles(e: DragEvent): void {
+  const arr = Array.from(e.dataTransfer?.files ?? []);
+  if (!arr.length) return;
+  const ok = arr.filter((f) => /\.(xlsx|xls|csv)$/i.test(f.name));
+  if (!ok.length) {
+    ElMessage.warning('仅支持 Excel（.xlsx / .xls）或 CSV 文件');
+    return;
+  }
+  pendingFiles.value.push(...ok);
+  ElMessage.success(`已选择 ${ok.length} 个文件，点击「完成」并入数据分析`);
+}
+
+function removeFile(i: number): void {
+  pendingFiles.value.splice(i, 1);
+}
+
+async function commitUpload(): Promise<void> {
+  if (!pendingFiles.value.length) {
+    ElMessage.warning('本次未选择本地文件');
+    return;
+  }
+  uploading.value = true;
+  try {
+    for (const f of pendingFiles.value) {
+      const res = await uploadDataset(f);
+      uploadedFiles.value.push({ filename: f.name, rows: res.rows, years: res.years });
+      for (const r of res.rows) {
+        if (!selectedCountries.value.includes(r.name)) selectedCountries.value.push(r.name);
+      }
+    }
+    ElMessage.success(`已并入 ${pendingFiles.value.length} 个本地文件，表格与筛选已更新`);
+    pendingFiles.value = [];
+    uploadVisible.value = false;
+  } catch (e) {
+    ElMessage.error(e instanceof Error ? e.message : '上传解析失败');
+  } finally {
+    uploading.value = false;
+  }
+}
+
+// ===== 图表视图（M4.2）=====
+
+type ChartType = 'line' | 'bar' | 'area' | 'radar';
+const CHART_COLORS = ['#2563EB', '#F59E0B', '#10B981', '#EF4444', '#8B5CF6', '#06B6D4'];
+const CHART_TYPE_NAME: Record<ChartType, string> = {
+  line: '折线趋势图',
+  bar: '柱状对比图',
+  area: '面积走势图',
+  radar: '雷达对比图',
+};
+
+const view = ref<'table' | 'chart'>('table');
+const chartType = ref<ChartType>('line');
+const chartLbl = ref(true);
+const chartGrid = ref(true);
+const chartFrom = ref<number>(yearFrom.value);
+const chartEl = ref<HTMLElement>();
+let chart: echarts.ECharts | undefined;
+
+const minYear = computed(() => (years.value.length ? Number(years.value[0]) : yearFrom.value));
+const maxYear = computed(() => (years.value.length ? Number(years.value[years.value.length - 1]) : yearTo.value));
+
+/** 图表可见年份（区间滑块起点之后） */
+const visibleYears = computed(() => years.value.filter((y) => Number(y) >= chartFrom.value));
+/** 图表渲染的国家（当前选中的实体） */
+const chartCountries = computed(() => series.value.filter((s) => selectedCountries.value.includes(s.country)));
+
+/** 雷达图取代表性年份：区间内最多 3 个（首/中/尾） */
+function pickRadarYears(ys: string[]): string[] {
+  if (ys.length <= 3) return ys;
+  return [ys[0], ys[Math.floor(ys.length / 2)], ys[ys.length - 1]];
+}
+
+/** 雷达图坐标轴最大值（区间内全部国家×年份的最大值） */
+function radarMax(ys: string[]): number {
+  let m = 0;
+  for (const c of chartCountries.value) {
+    for (const y of ys) {
+      const v = c.values[y];
+      if (v != null && v > m) m = v;
+    }
+  }
+  return m || 1;
+}
+
+function buildOption(): echarts.EChartsOption | null {
+  const ys = visibleYears.value;
+  const cs = chartCountries.value;
+  if (!ys.length || !cs.length) return null;
+
+  if (chartType.value === 'radar') {
+    const ryears = pickRadarYears(ys);
+    const rmax = radarMax(ys);
+    return {
+      color: CHART_COLORS,
+      tooltip: { trigger: 'item' },
+      legend: { data: ryears.map((y) => `${y}年`), top: 0 },
+      radar: {
+        indicator: cs.map((c) => ({ name: c.country, max: rmax })),
+        radius: '62%',
+        splitArea: { show: chartGrid.value },
+      },
+      series: [
+        {
+          type: 'radar',
+          data: ryears.map((y) => ({
+            name: `${y}年`,
+            value: cs.map((c) => c.values[y] ?? 0),
+            label: { show: chartLbl.value, fontSize: 10 },
+          })),
+        },
+      ],
+    };
+  }
+
+  const isArea = chartType.value === 'area';
+  // 面积图映射为带 areaStyle 的折线；非雷达类型仅剩 line / bar
+  const seriesType: 'line' | 'bar' = isArea || chartType.value === 'line' ? 'line' : 'bar';
+  const seriesOpt = cs.map((c) => ({
+    name: c.country,
+    type: seriesType,
+    smooth: seriesType === 'line',
+    areaStyle: isArea ? { opacity: 0.14 } : undefined,
+    symbol: 'circle',
+    symbolSize: 6,
+    data: ys.map((y) => c.values[y] ?? null),
+    label: { show: chartLbl.value, position: 'top', fontSize: 10, color: '#64748B' },
+    ...(seriesType === 'bar' ? { barMaxWidth: 16 } : {}),
+  })) as echarts.EChartsOption['series'];
+  return {
+    color: CHART_COLORS,
+    tooltip: { trigger: 'axis' },
+    legend: { type: 'scroll', data: cs.map((c) => c.country), top: 0 },
+    grid: { left: 60, right: 24, top: 44, bottom: 30 },
+    xAxis: {
+      type: 'category',
+      data: ys,
+      boundaryGap: seriesType === 'bar',
+      axisLine: { lineStyle: { color: '#CBD5E1' } },
+      axisLabel: { color: '#64748B' },
+    },
+    yAxis: {
+      type: 'value',
+      axisLabel: { color: '#64748B' },
+      splitLine: chartGrid.value
+        ? { lineStyle: { type: 'dashed', color: '#E2E8F0' } }
+        : { show: false },
+    },
+    series: seriesOpt,
+  };
+}
+
+function renderChart(): void {
+  if (!chart || view.value !== 'chart') return;
+  const opt = buildOption();
+  chart.clear();
+  if (opt) chart.setOption(opt, true);
+}
+
+async function openChart(): Promise<void> {
+  chartType.value = 'line';
+  if (!years.value.length || chartFrom.value < minYear.value || chartFrom.value > maxYear.value) {
+    chartFrom.value = minYear.value;
+  }
+  view.value = 'chart';
+  await nextTick();
+  if (!chart && chartEl.value) {
+    chart = echarts.init(chartEl.value);
+  }
+  chart?.resize();
+  renderChart();
+}
+
+function backToTable(): void {
+  chart?.dispose();
+  chart = undefined;
+  view.value = 'table';
+}
+
+function exportChartPng(): void {
+  if (!chart) {
+    ElMessage.warning('暂无图表可导出');
+    return;
+  }
+  const url = chart.getDataURL({ type: 'png', pixelRatio: 2, backgroundColor: '#fff' });
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'chart.png';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  ElMessage.success('已导出 PNG 图表');
+}
+
+function exportChartSvg(): void {
+  if (!chart) {
+    ElMessage.warning('暂无图表可导出');
+    return;
+  }
+  const svg = chart.renderToSVGString();
+  const blob = new Blob([svg], { type: 'image/svg+xml;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'chart.svg';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+  ElMessage.success('已导出 SVG 图表');
+}
+
+/** 图例：选中国家 + 最新年份值 */
+const legendItems = computed(() =>
+  chartCountries.value.map((c, i) => ({
+    name: c.country,
+    color: CHART_COLORS[i % CHART_COLORS.length],
+    latest: c.values[maxYear.value] ?? null,
+  })),
+);
+
+/** 长周期走势研判（简明文案） */
+const trendText = computed(() => {
+  const cs = chartCountries.value;
+  const ys = visibleYears.value;
+  if (!cs.length || !ys.length) return '暂无可研判数据';
+  const last = ys[ys.length - 1];
+  const first = ys[0];
+  const sorted = [...cs].sort(
+    (a, b) => (b.values[last] ?? -Infinity) - (a.values[last] ?? -Infinity),
+  );
+  const top = sorted[0];
+  const s = top.values[first];
+  const e = top.values[last];
+  const dir = s == null || e == null ? '波动' : e >= s ? '上行' : '下行';
+  return `${top.country} 在 ${chartFrom.value}-${last} 区间整体呈${dir}趋势，最新值 ${e == null ? '..' : fmt(e)}；建议结合产业政策与库存周期做多周期交叉验证。`;
+});
+
+watch([chartType, chartLbl, chartGrid, chartFrom, chartCountries, visibleYears], () => {
+  renderChart();
+});
+
 onMounted(load);
 watch(indicator, scheduleLoad);
+onBeforeUnmount(() => {
+  chart?.dispose();
+  chart = undefined;
+});
 </script>
 
 <template>
@@ -208,7 +531,8 @@ watch(indicator, scheduleLoad);
       </span>
     </div>
 
-    <div class="ws-body">
+    <!-- 表格视图 -->
+    <div class="ws-body" v-if="view === 'table'">
       <!-- 左侧多级筛选面板 -->
       <aside class="ws-fp">
         <div class="fp-head">
@@ -235,10 +559,10 @@ watch(indicator, scheduleLoad);
         </div>
 
         <div class="fp-group">
-          <div class="fp-title">国家 / 地区 <span class="cnt">{{ selCount }}/{{ ALL_COUNTRIES.length }}</span></div>
+          <div class="fp-title">国家 / 地区 <span class="cnt">{{ selCount }}/{{ countryOptions.length }}</span></div>
           <div class="fp-list">
             <label
-              v-for="c in ALL_COUNTRIES"
+              v-for="c in countryOptions"
               :key="c"
               class="fp-item"
               :class="{ on: selectedCountries.includes(c) }"
@@ -251,7 +575,7 @@ watch(indicator, scheduleLoad);
 
         <div class="fp-group">
           <div class="fp-title">数据来源</div>
-          <div class="fp-src">世界发展指标数据库（WDI）</div>
+          <div class="fp-src">{{ sourceLabel }}</div>
         </div>
       </aside>
 
@@ -268,7 +592,7 @@ watch(indicator, scheduleLoad);
         </div>
 
         <div class="ws-table" v-loading="loading">
-          <div v-if="!dataset || !rows.length" class="ws-empty">
+          <div v-if="!rows.length" class="ws-empty">
             {{ selectedCountries.length ? '该条件下暂无数据，请调整筛选' : '请选择国家/地区后查看数据' }}
           </div>
           <table v-else>
@@ -308,7 +632,7 @@ watch(indicator, scheduleLoad);
                   <td class="sticky-col"></td>
                   <td :colspan="years.length">
                     <div class="m-wrap">
-                      <span class="m-item">数据来源<b>{{ dataset.source }}</b></span>
+                      <span class="m-item">数据来源<b>{{ r.source ?? sourceLabel }}</b></span>
                       <span class="m-item">口径<b>{{ curIndicator?.name }}</b></span>
                       <span class="m-item">单位<b>{{ curIndicator?.unit }}</b></span>
                       <span class="m-item">缺失年份<b>{{ missingCount(r.values) }} 个</b></span>
@@ -321,7 +645,7 @@ watch(indicator, scheduleLoad);
         </div>
 
         <div class="ws-src-note">
-          <span>数据来源：{{ dataset?.source ?? '世界发展指标数据库（WDI）' }}</span>
+          <span>数据来源：{{ sourceLabel }}</span>
           <span>行维度为国家/地区，列维度为年份</span>
         </div>
 
@@ -330,7 +654,7 @@ watch(indicator, scheduleLoad);
             <svg class="ic" viewBox="0 0 24 24" fill="none"><path d="M12 3v12m0 0l-4-4m4 4l4-4M4 19h16" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" /></svg>
             下载 CSV
           </span>
-          <span class="op primary" @click="comingSoon('生成数据图表')">
+          <span class="op primary" @click="openChart">
             <svg class="ic" viewBox="0 0 24 24" fill="none"><path d="M4 19V9m6 10V5m6 14v-7m4 7V3" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" /></svg>
             生成数据图表
           </span>
@@ -338,7 +662,7 @@ watch(indicator, scheduleLoad);
             <svg class="ic" viewBox="0 0 24 24" fill="none"><path d="M12 3l1.6 4.4L18 9l-4.4 1.6L12 15l-1.6-4.4L6 9l4.4-1.6L12 3z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" /></svg>
             生成分析结果
           </span>
-          <span class="op" @click="comingSoon('数据上传补充')">
+          <span class="op" @click="openUpload">
             <svg class="ic" viewBox="0 0 24 24" fill="none"><path d="M12 16V4m0 0L8 8m4-4l4 4M4 20h16" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" /></svg>
             数据上传补充
           </span>
@@ -350,6 +674,124 @@ watch(indicator, scheduleLoad);
         </div>
       </div>
     </div>
+
+    <!-- 图表视图 -->
+    <div class="ws-body ws-chart-body" v-else>
+      <div class="chart-head">
+        <button class="btn-back" @click="backToTable">
+          <svg class="ic" viewBox="0 0 24 24" fill="none"><path d="M19 12H5m0 0l6-6m-6 6l6 6" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" /></svg>
+          返回工作台
+        </button>
+        <div class="chart-types">
+          <button
+            v-for="t in (['line', 'bar', 'area', 'radar'] as ChartType[])"
+            :key="t"
+            class="ct"
+            :class="{ on: chartType === t }"
+            @click="chartType = t"
+          >
+            {{ { line: '折线图', bar: '柱状图', area: '面积图', radar: '雷达图' }[t] }}
+          </button>
+        </div>
+        <span class="flex-1"></span>
+        <div class="chart-tools">
+          <label class="chk"><input type="checkbox" v-model="chartLbl" /> 数据标签</label>
+          <label class="chk"><input type="checkbox" v-model="chartGrid" /> 网格线</label>
+          <span class="op" @click="exportChartPng">
+            <svg class="ic" viewBox="0 0 24 24" fill="none"><path d="M12 3v12m0 0l-4-4m4 4l4-4M4 19h16" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" /></svg>
+            导出 PNG
+          </span>
+          <span class="op" @click="exportChartSvg">
+            <svg class="ic" viewBox="0 0 24 24" fill="none"><path d="M12 3v12m0 0l-4-4m4 4l4-4M4 19h16" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" /></svg>
+            导出 SVG
+          </span>
+        </div>
+      </div>
+
+      <div class="chart-main">
+        <div class="chart-card">
+          <div class="chart-title">
+            <b v-if="curIndicator">{{ curIndicator.name }} · {{ chartFrom }}-{{ maxYear }} 可视化</b>
+          </div>
+          <div class="chart-canvas" ref="chartEl"></div>
+        </div>
+
+        <div class="chart-range">
+          <span class="rl">时间区间</span>
+          <input
+            type="range"
+            :min="minYear"
+            :max="maxYear"
+            v-model.number="chartFrom"
+          />
+          <span class="rv">{{ chartFrom }} - {{ maxYear }}</span>
+        </div>
+      </div>
+
+      <div class="chart-side">
+        <div class="card">
+          <div class="hd">图例</div>
+          <div class="legend" v-if="legendItems.length">
+            <div v-for="it in legendItems" :key="it.name" class="legend-item">
+              <span class="sw" :style="{ background: it.color }"></span>
+              <span class="nm">{{ it.name }}</span>
+              <span class="flex-1"></span>
+              <b>{{ it.latest == null ? '..' : fmt(it.latest) }}</b>
+            </div>
+          </div>
+          <div class="empty-tip" v-else>暂无选中数据</div>
+        </div>
+        <div class="card">
+          <div class="hd">长周期走势研判</div>
+          <div class="trend">{{ trendText }}</div>
+        </div>
+        <div class="card">
+          <div class="hd">智能图表推荐</div>
+          <div class="rec-list">
+            <span
+              v-for="t in (['line', 'bar', 'area', 'radar'] as ChartType[])"
+              :key="t"
+              class="rec"
+              :class="{ on: chartType === t }"
+              @click="chartType = t"
+            >
+              {{ CHART_TYPE_NAME[t] }}
+            </span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 上传补充弹窗 -->
+    <el-dialog v-model="uploadVisible" title="上传本地文件" width="520px" :close-on-click-modal="false">
+      <div class="up-drop" @click="() => ($refs.upInput as HTMLInputElement).click()" @dragover.prevent @drop.prevent="onDropFiles">
+        <div class="up-ic">
+          <svg viewBox="0 0 24 24" fill="none"><path d="M12 16V4m0 0L8 8m4-4l4 4M4 20h16" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" /></svg>
+        </div>
+        <div class="up-t">点击上传或拖拽本地文件到此处</div>
+        <div class="up-s">支持 Excel（.xlsx / .xls）、CSV · 可批量上传多个文件</div>
+      </div>
+      <input
+        ref="upInput"
+        type="file"
+        accept=".xlsx,.xls,.csv"
+        multiple
+        style="display: none"
+        @change="onPickFiles"
+      />
+      <div class="up-list" v-if="pendingFiles.length">
+        <div v-for="(f, i) in pendingFiles" :key="f.name + i" class="up-file">
+          <span class="up-name">{{ f.name }}</span>
+          <span class="up-size">{{ (f.size / 1024).toFixed(0) }} KB</span>
+          <span class="link" @click="removeFile(i)">移除</span>
+        </div>
+      </div>
+      <div class="up-note">上传的本地文件将即时并入当前数据分析工作台，支持与平台多源数据合并分析、即时更新表格与图表。</div>
+      <template #footer>
+        <el-button @click="uploadVisible = false">取消</el-button>
+        <el-button type="primary" :loading="uploading" @click="commitUpload">完成</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -762,5 +1204,310 @@ watch(indicator, scheduleLoad);
 .ic {
   width: 15px;
   height: 15px;
+}
+
+/* ===== 图表视图 ===== */
+.ws-chart-body {
+  padding: 16px 20px 20px;
+  gap: 16px;
+}
+
+.chart-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 2px;
+}
+
+.btn-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 12px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #fff;
+  color: #475569;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.btn-back:hover {
+  border-color: #2563eb;
+  color: #2563eb;
+}
+
+.chart-types {
+  display: flex;
+  gap: 4px;
+  padding: 3px;
+  background: #f1f5f9;
+  border-radius: 9px;
+}
+
+.chart-types .ct {
+  height: 26px;
+  padding: 0 14px;
+  border: none;
+  border-radius: 7px;
+  background: transparent;
+  color: #64748b;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+
+.chart-types .ct.on {
+  background: #fff;
+  color: #2563eb;
+  font-weight: 600;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.06);
+}
+
+.chart-tools {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.chk {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12.5px;
+  color: #475569;
+  cursor: pointer;
+}
+
+.chk input {
+  accent-color: #2563eb;
+}
+
+.chart-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.chart-card {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: #fff;
+  border: 1px solid #eef2f7;
+  border-radius: 12px;
+  padding: 16px;
+}
+
+.chart-title {
+  font-size: 14px;
+  color: #0f172a;
+  margin-bottom: 8px;
+}
+
+.chart-canvas {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+}
+
+.chart-range {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  background: #fff;
+  border: 1px solid #eef2f7;
+  border-radius: 10px;
+}
+
+.chart-range .rl {
+  font-size: 12px;
+  color: #64748b;
+  flex: 0 0 auto;
+}
+
+.chart-range input {
+  flex: 1;
+  accent-color: #2563eb;
+}
+
+.chart-range .rv {
+  font-size: 12.5px;
+  color: #2563eb;
+  font-weight: 600;
+  flex: 0 0 auto;
+}
+
+.chart-side {
+  flex: 0 0 260px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  overflow-y: auto;
+}
+
+.chart-side .card {
+  background: #fff;
+  border: 1px solid #eef2f7;
+  border-radius: 12px;
+  padding: 14px;
+}
+
+.chart-side .hd {
+  font-size: 13px;
+  font-weight: 700;
+  color: #0f172a;
+  margin-bottom: 10px;
+}
+
+.legend {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.legend-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.5px;
+  color: #334155;
+}
+
+.legend-item .sw {
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+  flex: 0 0 auto;
+}
+
+.legend-item .nm {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.legend-item b {
+  color: #475569;
+  font-weight: 600;
+}
+
+.trend {
+  font-size: 12.5px;
+  line-height: 1.9;
+  color: #334155;
+}
+
+.rec-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.rec {
+  text-align: center;
+  padding: 8px 0;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  font-size: 12.5px;
+  color: #475569;
+  cursor: pointer;
+}
+
+.rec:hover {
+  border-color: #2563eb;
+  color: #2563eb;
+}
+
+.rec.on {
+  background: #e9effd;
+  border-color: #2563eb;
+  color: #2563eb;
+}
+
+.empty-tip {
+  font-size: 12.5px;
+  color: #94a3b8;
+}
+
+/* ===== 上传弹窗 ===== */
+.up-drop {
+  border: 1.5px dashed #cbd5e1;
+  border-radius: 10px;
+  padding: 26px 16px;
+  text-align: center;
+  cursor: pointer;
+  transition: border-color 0.2s;
+}
+
+.up-drop:hover {
+  border-color: #2563eb;
+  background: #f8faff;
+}
+
+.up-ic {
+  color: #2563eb;
+  width: 30px;
+  height: 30px;
+  margin: 0 auto 8px;
+}
+
+.up-t {
+  font-size: 13.5px;
+  color: #334155;
+}
+
+.up-s {
+  margin-top: 4px;
+  font-size: 12px;
+  color: #94a3b8;
+}
+
+.up-list {
+  margin-top: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.up-file {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  background: #f8fafc;
+  border-radius: 8px;
+  font-size: 13px;
+}
+
+.up-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #334155;
+}
+
+.up-size {
+  color: #94a3b8;
+  font-size: 12px;
+}
+
+.link {
+  color: #2563eb;
+  cursor: pointer;
+  font-size: 12.5px;
+}
+
+.up-note {
+  margin-top: 12px;
+  font-size: 12px;
+  line-height: 1.7;
+  color: #94a3b8;
 }
 </style>
