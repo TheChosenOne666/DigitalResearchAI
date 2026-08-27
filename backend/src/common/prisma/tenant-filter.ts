@@ -11,6 +11,10 @@ export const TENANT_MODELS = new Set<string>([
   'SearchReport',
   'SearchSource',
   'SearchUsage',
+  'KbLibrary',
+  'KbGroup',
+  'KbDocument',
+  'KbChunk',
 ]);
 
 /** 需要注入 where.tenantId 的查询操作（含 extended where unique 的 update/delete） */

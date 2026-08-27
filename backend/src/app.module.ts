@@ -6,6 +6,7 @@ import { TransformInterceptor } from './common/interceptors/transform.intercepto
 import { HealthModule } from './common/health/health.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { SearchModule } from './modules/search/search.module';
+import { KbModule } from './modules/kb/kb.module';
 import { SessionService } from './common/auth/session.service';
 import { RedisSessionStore } from './common/auth/redis-session.store';
 import { SessionAuthGuard } from './common/auth/session-auth.guard';
@@ -17,7 +18,7 @@ import { TenantContextInterceptor } from './common/auth/tenant-context.intercept
  * 会话认证守卫（@Public 跳过）→ RBAC 角色守卫（@Roles 校验）→ 租户上下文拦截器。
  */
 @Module({
-  imports: [ConfigModule.forRoot({ isGlobal: true }), HealthModule, AuthModule, SearchModule],
+  imports: [ConfigModule.forRoot({ isGlobal: true }), HealthModule, AuthModule, SearchModule, KbModule],
   providers: [
     { provide: APP_INTERCEPTOR, useClass: TransformInterceptor },
     { provide: APP_FILTER, useClass: AllExceptionsFilter },

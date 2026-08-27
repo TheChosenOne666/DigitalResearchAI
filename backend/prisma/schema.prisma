@@ -198,6 +198,175 @@ model SearchSource {
   @@map("search_sources")
 }
 
+// ===== M3 知识库域（库/分组/文档/切片） =====
+
+/// 库可见性
+enum KbVisibility {
+  /// 私有（仅本租户可见）
+  PRIVATE
+  /// 公共
+  PUBLIC
+}
+
+/// 切片分段方式
+enum KbChunkMode {
+  /// 固定长度
+  FIXED
+  /// 智能分段（按标题/段落/句子）
+  SMART
+}
+
+/// 文档学习状态机（对齐原型 9.12）
+enum KbDocumentStatus {
+  /// 待学习（队列中）
+  PENDING
+  /// 学习中
+  LEARNING
+  /// 学习完成（可参与智搜检索）
+  READY
+  /// 学习失败（可重新学习）
+  FAILED
+  /// 学习中断（可继续学习）
+  INTERRUPTED
+}
+
+/// 知识库（含检索/向量化配置）
+model KbLibrary {
+  /// 主键
+  id         String       @id @default(cuid()) @db.VarChar(32)
+  /// 归属租户（行级隔离）
+  tenantId   String       @map("tenant_id") @db.VarChar(32)
+  /// 库名称
+  name       String       @db.VarChar(128)
+  /// 可见性（私有/公共）
+  visibility KbVisibility @default(PRIVATE)
+  /// 封面色
+  color      String       @default("#16675f") @db.VarChar(16)
+  /// 简介
+  description String?     @db.VarChar(512)
+  /// 检索召回条数 TopK（默认 10）
+  topK       Int          @default(10)
+  /// 相似度阈值（默认 0.4）
+  threshold  Float        @default(0.4)
+  /// 混合检索本地路加权（默认 1.2）
+  weight     Float        @default(1.2)
+  /// 分段方式（固定长度/智能）
+  chunkMode  KbChunkMode  @default(FIXED)
+  /// 分段长度（字符，默认 800）
+  chunkSize  Int          @default(800)
+  /// 重叠长度（字符，默认 80）
+  chunkOverlap Int        @default(80)
+  /// 向量模型名
+  embedModel String       @default("doubao-embedding-large") @db.VarChar(128)
+  /// 创建时间
+  createdAt  DateTime     @default(now()) @map("created_at")
+  /// 更新时间
+  updatedAt  DateTime     @updatedAt @map("updated_at")
+
+  groups    KbGroup[]
+  documents KbDocument[]
+  chunks    KbChunk[]
+
+  @@index([tenantId])
+  @@map("kb_libraries")
+}
+
+/// 知识库分组
+model KbGroup {
+  /// 主键
+  id        String   @id @default(cuid()) @db.VarChar(32)
+  /// 归属租户
+  tenantId  String   @map("tenant_id") @db.VarChar(32)
+  /// 所属库
+  libraryId String   @map("library_id") @db.VarChar(32)
+  /// 分组名
+  name      String   @db.VarChar(128)
+  /// 创建时间
+  createdAt DateTime @default(now()) @map("created_at")
+
+  library   KbLibrary    @relation(fields: [libraryId], references: [id], onDelete: Cascade)
+  documents KbDocument[]
+  chunks    KbChunk[]
+
+  @@index([tenantId])
+  @@index([libraryId])
+  @@map("kb_groups")
+}
+
+/// 知识库文档（上传/存入的原始文件与学习状态）
+model KbDocument {
+  /// 主键
+  id         String           @id @default(cuid()) @db.VarChar(32)
+  /// 归属租户
+  tenantId   String           @map("tenant_id") @db.VarChar(32)
+  /// 所属分组（可空，未分组）
+  groupId    String?          @map("group_id") @db.VarChar(32)
+  /// 所属库
+  libraryId  String           @map("library_id") @db.VarChar(32)
+  /// 文档名
+  name       String           @db.VarChar(255)
+  /// MIME 类型（xlsx/csv/docx/pdf/text）
+  mimeType   String           @map("mime_type") @db.VarChar(32)
+  /// 文件大小（字节）
+  size       Int
+  /// 学习状态（状态机）
+  status     KbDocumentStatus @default(PENDING)
+  /// 学习失败原因
+  failReason String?          @map("fail_reason") @db.VarChar(512)
+  /// 切片数量
+  chunkCount Int              @default(0) @map("chunk_count")
+  /// 来源标签（智搜入库时保留），JSON
+  tags       Json?
+  /// 来源报告ID（智搜入库时关联，可空）
+  sourceSessionId String?     @map("source_session_id") @db.VarChar(32)
+  /// 创建时间
+  createdAt  DateTime         @default(now()) @map("created_at")
+  /// 更新时间
+  updatedAt  DateTime         @updatedAt @map("updated_at")
+
+  library KbLibrary  @relation(fields: [libraryId], references: [id], onDelete: Cascade)
+  group   KbGroup?   @relation(fields: [groupId], references: [id], onDelete: SetNull)
+  chunks  KbChunk[]
+
+  @@index([tenantId])
+  @@index([libraryId])
+  @@index([groupId])
+  @@map("kb_documents")
+}
+
+/// 知识库切片（content 供 PG 全文，vectorId 关联 Qdrant）
+model KbChunk {
+  /// 主键
+  id         String   @id @default(cuid()) @db.VarChar(32)
+  /// 归属租户
+  tenantId   String   @map("tenant_id") @db.VarChar(32)
+  /// 所属文档
+  documentId String   @map("document_id") @db.VarChar(32)
+  /// 所属分组
+  groupId    String?  @map("group_id") @db.VarChar(32)
+  /// 所属库
+  libraryId  String   @map("library_id") @db.VarChar(32)
+  /// 切片序号
+  index      Int
+  /// 切片内容（PG 全文检索）
+  content    String
+  /// 关键词（智能分段时可提取），可空
+  keywords   String?  @db.VarChar(512)
+  /// Qdrant 向量点 ID（未向量化为空）
+  vectorId   String?  @map("vector_id") @db.VarChar(64)
+  /// 创建时间
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  library  KbLibrary  @relation(fields: [libraryId], references: [id], onDelete: Cascade)
+  group    KbGroup?   @relation(fields: [groupId], references: [id], onDelete: SetNull)
+  document KbDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@index([libraryId])
+  @@index([documentId])
+  @@map("kb_chunks")
+}
+
 /// 用量计数（按天聚合，tenant+user+day 唯一）
 model SearchUsage {
   /// 归属租户
