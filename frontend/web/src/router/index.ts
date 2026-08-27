@@ -2,6 +2,7 @@ import { createRouter, createWebHistory } from 'vue-router';
 import HomeView from '@/views/HomeView.vue';
 import LoginView from '@/views/LoginView.vue';
 import KnowledgeView from '@/views/KnowledgeView.vue';
+import WorkspaceView from '@/views/WorkspaceView.vue';
 import { useSessionStore } from '@/stores/session';
 
 /** 路由元信息扩展：requiresAuth=true 表示该路由需登录 */
@@ -21,6 +22,8 @@ const router = createRouter({
     { path: '/search', redirect: '/' },
     // M3 知识库页（受登录门禁保护，对齐原型 9.31）
     { path: '/knowledge', name: 'knowledge', component: KnowledgeView, meta: { requiresAuth: true } },
+    // M4.1 数据工作台（受登录门禁保护）
+    { path: '/workspace', name: 'workspace', component: WorkspaceView, meta: { requiresAuth: true } },
   ],
 });
 

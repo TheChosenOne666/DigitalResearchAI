@@ -26,6 +26,7 @@ const activeNav = computed(() => {
   const p = route.path;
   if (p === '/' || p === '/search') return 'home';
   if (p.startsWith('/knowledge')) return 'kb';
+  if (p.startsWith('/workspace')) return 'workspace';
   return '';
 });
 
@@ -93,6 +94,9 @@ onBeforeUnmount(() => document.removeEventListener('click', closeMenus));
         </a>
         <a class="tn-item" :class="{ active: activeNav === 'kb' }" @click="router.push('/knowledge')">
           知识库
+        </a>
+        <a class="tn-item" :class="{ active: activeNav === 'workspace' }" @click="router.push('/workspace')">
+          工作台
         </a>
         <div class="tn-drop">
           <a class="tn-item" :class="{ active: histOpen }" @click="toggleHist">
