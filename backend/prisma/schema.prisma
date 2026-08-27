@@ -315,6 +315,8 @@ model KbDocument {
   failReason String?          @map("fail_reason") @db.VarChar(512)
   /// 切片数量
   chunkCount Int              @default(0) @map("chunk_count")
+  /// 原始文件字节（重学/中断续学/补向量时回读，上限 50MB）
+  fileData   Bytes?           @map("file_data")
   /// 来源标签（智搜入库时保留），JSON
   tags       Json?
   /// 来源报告ID（智搜入库时关联，可空）

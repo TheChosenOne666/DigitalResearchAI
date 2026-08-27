@@ -9,9 +9,13 @@ import {
   Post,
   Put,
   Query,
+  UploadedFile,
+  UseInterceptors,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import { ErrorCode } from '@app/shared';
 import { BizException } from '../../common/exceptions/biz.exception';
+import { KbService } from './kb.service';
 import { KbStoreService } from './store/kb.store.service';
 import type {
   GroupInput,
@@ -24,6 +28,12 @@ import type {
 const DEFAULT_PAGE_SIZE = 10;
 const MAX_PAGE_SIZE = 50;
 
+/** 上传文件最小形状（避免依赖 @types/multer） */
+interface UploadedDoc {
+  originalname: string;
+  buffer: Buffer;
+}
+
 /**
  * 知识库控制器（M3.1：库/分组/文档 CRUD）。
  * 文档上传与学习队列在 M3.2 接入；召回测试与入库链路在 M3.4 实现。
@@ -31,7 +41,10 @@ const MAX_PAGE_SIZE = 50;
  */
 @Controller('kb')
 export class KbController {
-  constructor(private readonly store: KbStoreService) {}
+  constructor(
+    private readonly store: KbStoreService,
+    private readonly kb: KbService,
+  ) {}
 
   // ===== 库 =====
 
@@ -122,6 +135,30 @@ export class KbController {
       throw new BizException(ErrorCode.NOT_FOUND, '文档不存在', HttpStatus.NOT_FOUND);
     }
     return doc;
+  }
+
+  @Post('libraries/:id/documents')
+  @HttpCode(HttpStatus.CREATED)
+  @UseInterceptors(
+    FileInterceptor('file', {
+      limits: { fileSize: 50 * 1024 * 1024 },
+    }),
+  )
+  async uploadDocument(
+    @Param('id') id: string,
+    @UploadedFile() file: UploadedDoc,
+    @Query('groupId') groupId?: string,
+  ) {
+    if (!file) {
+      throw new BizException(ErrorCode.PARAM_MISSING, '缺少上传文件', HttpStatus.BAD_REQUEST);
+    }
+    return this.kb.uploadDocument(id, groupId ?? null, file.originalname, file.buffer);
+  }
+
+  @Post('libraries/:id/documents/:did/relearn')
+  @HttpCode(HttpStatus.OK)
+  relearn(@Param('id') id: string, @Param('did') did: string) {
+    return this.kb.relearn(id, did);
   }
 
   @Delete('documents/:id')

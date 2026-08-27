@@ -1,17 +1,30 @@
 import { Module } from '@nestjs/common';
 import { PrismaModule } from '../../common/prisma/prisma.module';
 import { KbController } from './kb.controller';
+import { KbService } from './kb.service';
 import { KbStoreService } from './store/kb.store.service';
+import { DocParserService } from './parse/doc-parser.service';
+import { EmbedService } from './embeddings/embed.service';
+import { QdrantService } from './vector/qdrant.service';
+import { KbLearningService } from './learning/learning.service';
+import { ChunkEmbedProcessor } from './queue/chunk-embed.processor';
 
 /**
- * 知识库模块（M3.1 数据模型与 CRUD）。
- * 提供库/分组/文档的完整 CRUD 操作，全部经 PrismaService.forTenant 租户隔离。
- * M3.2 的文件解析与学习队列、M3.3 混合检索、M3.4 召回测试与入库链路将在此模块扩展。
+ * 知识库模块。
+ * M3.1：库/分组/文档 CRUD；M3.2：上传解析 + 学习队列（DocParser/Embed/Qdrant/Learning/ChunkEmbedProcessor）。
  */
 @Module({
   imports: [PrismaModule],
   controllers: [KbController],
-  providers: [KbStoreService],
-  exports: [KbStoreService],
+  providers: [
+    KbStoreService,
+    KbService,
+    DocParserService,
+    EmbedService,
+    QdrantService,
+    KbLearningService,
+    ChunkEmbedProcessor,
+  ],
+  exports: [KbStoreService, KbLearningService],
 })
 export class KbModule {}
