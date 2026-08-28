@@ -7,6 +7,7 @@ import MarkdownView from '@/components/MarkdownView.vue';
 import {
   fetchAnalyzeReport,
   saveAnalyzeToKb,
+  exportReport,
   type AnalyzeReportDetail,
 } from '@/api/workspace';
 import { listLibraries, listGroups, type KbLibrary, type KbGroup } from '@/api/kb';
@@ -60,20 +61,20 @@ function backToWorkspace(): void {
   router.push('/workspace');
 }
 
-/** 下载文件（M4.3：导出 Markdown；Word/PPT 正式导出留 M4.4） */
-function downloadMarkdown(): void {
-  if (!report.value) return;
-  const blob = new Blob(['\ufeff' + report.value.contentMd], {
-    type: 'text/markdown;charset=utf-8',
-  });
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = `${report.value.title || '分析报告'}.md`;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  URL.revokeObjectURL(a.href);
-  ElMessage.success('已导出 Markdown 文件');
+/** 导出报告文件（M4.4：Word / PPT 二进制流下载） */
+const exporting = ref(false);
+
+async function downloadFile(format: 'docx' | 'pptx'): Promise<void> {
+  if (!report.value || exporting.value) return;
+  exporting.value = true;
+  try {
+    await exportReport('workspace', report.value.id, format);
+    ElMessage.success(`已导出 ${format === 'docx' ? 'Word' : 'PPT'} 文件`);
+  } catch (e) {
+    ElMessage.error(e instanceof Error ? e.message : '导出失败');
+  } finally {
+    exporting.value = false;
+  }
 }
 
 // ===== 存入知识库 =====
@@ -166,10 +167,18 @@ onMounted(load);
             <svg class="ic" viewBox="0 0 24 24" fill="none"><path d="M19 12H5m0 0l6-6m-6 6l6 6" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" /></svg>
             返回数据分析工作台
           </button>
-          <button class="btn" @click="downloadMarkdown">
-            <svg class="ic" viewBox="0 0 24 24" fill="none"><path d="M12 3v12m0 0l-4-4m4 4l4-4M4 19h16" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" /></svg>
-            下载文件
-          </button>
+          <el-dropdown trigger="click" :disabled="exporting" @command="(f: 'docx' | 'pptx') => downloadFile(f)">
+            <button class="btn">
+              <svg class="ic" viewBox="0 0 24 24" fill="none"><path d="M12 3v12m0 0l-4-4m4 4l4-4M4 19h16" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" /></svg>
+              下载文件
+            </button>
+            <template #dropdown>
+              <el-dropdown-menu>
+                <el-dropdown-item command="docx">导出 Word（.docx）</el-dropdown-item>
+                <el-dropdown-item command="pptx">导出 PPT（.pptx）</el-dropdown-item>
+              </el-dropdown-menu>
+            </template>
+          </el-dropdown>
           <button class="btn primary" @click="openSave">
             <svg class="ic" viewBox="0 0 24 24" fill="none"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20M4 19.5A2.5 2.5 0 0 0 6.5 22H20V2H6.5A2.5 2.5 0 0 0 4 4.5v15z" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" /></svg>
             存入知识库

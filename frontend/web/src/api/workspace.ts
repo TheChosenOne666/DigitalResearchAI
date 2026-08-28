@@ -229,3 +229,164 @@ export async function saveAnalyzeToKb(
     body: JSON.stringify(body),
   });
 }
+
+// ===== M4.4 我的数据 =====
+
+/** 我的数据列表项（收藏的数据集快照） */
+export interface MyDatasetItem {
+  id: string;
+  name: string;
+  data: {
+    indicator?: string;
+    countries?: string[];
+    years?: string[];
+    series?: Array<{ country: string; values: Record<string, number> }>;
+    sources?: AnalyzeSource[];
+  } | null;
+  tags: string[];
+  status: string;
+  sourceType: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** 我的数据列表查询 */
+export async function listMyDatasets(params: {
+  keyword?: string;
+  tag?: string;
+  status?: string;
+  page: number;
+  pageSize: number;
+}): Promise<{ list: MyDatasetItem[]; total: number }> {
+  const query = new URLSearchParams();
+  if (params.keyword) query.set('keyword', params.keyword);
+  if (params.tag) query.set('tag', params.tag);
+  if (params.status) query.set('status', params.status);
+  query.set('page', String(params.page));
+  query.set('pageSize', String(params.pageSize));
+  return request(`/api/v1/workspace/datasets?${query.toString()}`);
+}
+
+/** 收藏当前工作台数据为快照（M4.4） */
+export async function collectDataset(body: {
+  name: string;
+  data: Record<string, unknown>;
+  tags?: string[];
+  sourceType?: string;
+}): Promise<{ id: string }> {
+  return request('/api/v1/workspace/datasets', {
+    method: 'POST',
+    body: JSON.stringify(body),
+  });
+}
+
+/** 归档/恢复（幂等 toggle） */
+export async function archiveDataset(id: string): Promise<{ status: string }> {
+  return request(`/api/v1/workspace/datasets/${encodeURIComponent(id)}/archive`, { method: 'POST' });
+}
+
+/** 删除数据集 */
+export async function deleteDataset(id: string): Promise<{ deleted: boolean }> {
+  return request(`/api/v1/workspace/datasets/${encodeURIComponent(id)}`, { method: 'DELETE' });
+}
+
+/** 导出我的数据清单（CSV 附件下载） */
+export async function exportDatasetsCsv(): Promise<void> {
+  const res = await fetch('/api/v1/workspace/datasets/export', {
+    headers: { Authorization: `Bearer ${localStorage.getItem('web.sessionId') ?? ''}` },
+  });
+  if (!res.ok) throw new Error(`导出失败(${res.status})`);
+  const blob = await res.blob();
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `我的数据清单_${new Date().toISOString().slice(0, 10)}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(a.href);
+}
+
+// ===== M4.4 我的报告（聚合） =====
+
+/** 我的报告聚合列表项（type=search → id 为 sessionId；type=workspace → id 为 reportId） */
+export interface MyReportItem {
+  type: 'search' | 'workspace';
+  id: string;
+  name: string;
+  format: string;
+  version: number;
+  updatedAt: string;
+  status: string;
+}
+
+/** 我的报告聚合列表 */
+export async function listMyReports(params: {
+  keyword?: string;
+  page: number;
+  pageSize: number;
+}): Promise<{ list: MyReportItem[]; total: number }> {
+  const query = new URLSearchParams();
+  if (params.keyword) query.set('keyword', params.keyword);
+  query.set('page', String(params.page));
+  query.set('pageSize', String(params.pageSize));
+  return request(`/api/v1/workspace/reports?${query.toString()}`);
+}
+
+/** 报告版本列表项 */
+export interface ReportVersionItem {
+  id: string;
+  version: number;
+  createdAt: string;
+  tokenUsage?: number;
+}
+
+/** 报告版本列表（?type=search|workspace） */
+export async function fetchReportVersions(
+  id: string,
+  type: 'search' | 'workspace',
+): Promise<{ list: ReportVersionItem[] }> {
+  return request(
+    `/api/v1/workspace/reports/${encodeURIComponent(id)}/versions?type=${type}`,
+  );
+}
+
+/**
+ * 导出报告（M4.4）：POST /report/export 返回二进制流，浏览器触发下载。
+ * @param type search（智搜报告，id 为 sessionId）/ workspace（分析结果报告，id 为 reportId）
+ * @param format docx / pptx
+ */
+export async function exportReport(
+  type: 'search' | 'workspace',
+  id: string,
+  format: 'docx' | 'pptx',
+): Promise<void> {
+  const res = await fetch('/api/v1/report/export', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${localStorage.getItem('web.sessionId') ?? ''}`,
+    },
+    body: JSON.stringify({ type, id, format }),
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    let message = text;
+    try {
+      message = (JSON.parse(text) as { message?: string }).message ?? text;
+    } catch {
+      /* 非 JSON 错误体，原样展示 */
+    }
+    throw new Error(message || `导出失败(${res.status})`);
+  }
+  const disposition = res.headers.get('Content-Disposition') ?? '';
+  const star = /filename\*=UTF-8''([^;]+)/.exec(disposition);
+  const filename = star ? decodeURIComponent(star[1]) : `报告.${format}`;
+  const blob = await res.blob();
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(a.href);
+}

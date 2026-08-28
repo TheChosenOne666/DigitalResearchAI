@@ -420,3 +420,30 @@ model WorkspaceReport {
   @@index([tenantId, createdAt])
   @@map("workspace_reports")
 }
+
+/// 我的数据（收藏的工作台数据集快照，M4.4）
+model WorkspaceDataset {
+  /// 主键
+  id          String   @id @default(cuid()) @db.VarChar(32)
+  /// 归属租户（行级隔离）
+  tenantId    String   @map("tenant_id") @db.VarChar(32)
+  /// 创建人
+  userId      String   @map("user_id") @db.VarChar(32)
+  /// 数据集名
+  name        String   @db.VarChar(255)
+  /// 时序快照（指标/国家/年份/值/来源），JSON
+  data        Json
+  /// 标签数组，JSON
+  tags        Json?
+  /// 状态（ACTIVE / ARCHIVED）
+  status      String   @default("ACTIVE") @db.VarChar(16)
+  /// 来源类型（WDI / upload / mixed）
+  sourceType  String   @map("source_type") @db.VarChar(16)
+  /// 创建时间
+  createdAt   DateTime @default(now()) @map("created_at")
+  /// 更新时间
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  @@index([tenantId, createdAt])
+  @@map("workspace_datasets")
+}

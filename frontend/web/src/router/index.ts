@@ -4,6 +4,9 @@ import LoginView from '@/views/LoginView.vue';
 import KnowledgeView from '@/views/KnowledgeView.vue';
 import WorkspaceView from '@/views/WorkspaceView.vue';
 import AnalyzeResultView from '@/views/AnalyzeResultView.vue';
+import MyDataView from '@/views/MyDataView.vue';
+import MyReportsView from '@/views/MyReportsView.vue';
+import SearchReportView from '@/views/SearchReportView.vue';
 import { useSessionStore } from '@/stores/session';
 
 /** 路由元信息扩展：requiresAuth=true 表示该路由需登录 */
@@ -30,6 +33,16 @@ const router = createRouter({
       path: '/workspace/analyze/:id',
       name: 'analyze-result',
       component: AnalyzeResultView,
+      meta: { requiresAuth: true },
+    },
+    // M4.4 我的数据 / 我的报告（受登录门禁保护）
+    { path: '/my-data', name: 'my-data', component: MyDataView, meta: { requiresAuth: true } },
+    { path: '/my-reports', name: 'my-reports', component: MyReportsView, meta: { requiresAuth: true } },
+    // M4.4 智搜报告详情页（浏览入口）
+    {
+      path: '/search/reports/:id',
+      name: 'search-report',
+      component: SearchReportView,
       meta: { requiresAuth: true },
     },
   ],

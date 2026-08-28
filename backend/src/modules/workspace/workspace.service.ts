@@ -1,10 +1,13 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { HttpStatus, Injectable, Logger } from '@nestjs/common';
 import {
   fetchWdi,
   resolveCountryCodes,
   resolveIndicatorCodes,
 } from '../search/connectors/vertical.connector';
+import { BizException } from '../../common/exceptions/biz.exception';
+import { ErrorCode } from '@app/shared';
 import { parseTimeseries, type UploadedDataset } from './upload-parser';
+import { WorkspaceStoreService } from './workspace.store.service';
 
 /** 单条时序序列（某国家在某指标下的逐年值） */
 export interface DatasetSeries {
@@ -44,6 +47,8 @@ export interface DatasetResult {
 @Injectable()
 export class WorkspaceService {
   private readonly logger = new Logger(WorkspaceService.name);
+
+  constructor(private readonly store: WorkspaceStoreService) {}
 
   /**
    * 取时序数据集。单指标取数失败仅跳过该项，不阻断整体（与智搜熔断策略一致）。
@@ -121,5 +126,37 @@ export class WorkspaceService {
       `上传补充解析完成：${result.rows.length} 行 × ${result.years.length} 年`,
     );
     return result;
+  }
+
+  /**
+   * 收藏工作台筛选数据到「我的数据」（M4.4）：校验后落快照。
+   * @param body 收藏入参（name/data/tags/sourceType）
+   */
+  async collectDataset(body: {
+    name?: unknown;
+    data?: unknown;
+    tags?: unknown;
+    sourceType?: unknown;
+  }): Promise<{ id: string }> {
+    if (!body || typeof body.name !== 'string' || !body.name.trim()) {
+      throw new BizException(ErrorCode.PARAM_MISSING, '缺少数据集名称', HttpStatus.BAD_REQUEST);
+    }
+    if (!body.data || typeof body.data !== 'object') {
+      throw new BizException(ErrorCode.PARAM_MISSING, '缺少数据集内容', HttpStatus.BAD_REQUEST);
+    }
+    const tags = Array.isArray(body.tags)
+      ? body.tags.filter((t): t is string => typeof t === 'string' && t.trim().length > 0).slice(0, 10)
+      : [];
+    const sourceType =
+      typeof body.sourceType === 'string' && ['WDI', 'upload', 'mixed'].includes(body.sourceType)
+        ? body.sourceType
+        : 'mixed';
+    this.logger.log(`收藏数据集：name=${body.name.trim()} tags=${tags.length} source=${sourceType}`);
+    return this.store.saveDataset({
+      name: body.name.trim(),
+      data: body.data as Record<string, unknown>,
+      tags,
+      sourceType,
+    });
   }
 }

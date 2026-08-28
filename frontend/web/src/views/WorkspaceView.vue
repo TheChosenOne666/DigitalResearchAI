@@ -8,6 +8,7 @@ import {
   fetchDataset,
   uploadDataset,
   analyzeStream,
+  collectDataset,
   type DatasetResult,
   type DatasetSeries,
   type AnalyzeParams,
@@ -254,9 +255,41 @@ function downloadCsv(): void {
   ElMessage.success('已导出 CSV 文件');
 }
 
-/** M4.3–M4.4 占位功能 */
-function comingSoon(name: string): void {
-  ElMessage.info(`「${name}」将在后续批次开放`);
+// ===== 收藏到我的数据（M4.4）=====
+
+const collecting = ref(false);
+
+/** 组装当前工作台状态为快照并收藏（名称默认 指标_区间，可在我的数据溯源查看） */
+async function collectToMyData(): Promise<void> {
+  if (!series.value.length) {
+    ElMessage.warning('请先选择国家/地区并加载数据');
+    return;
+  }
+  if (collecting.value) return;
+  collecting.value = true;
+  try {
+    const ind = curIndicator.value;
+    const hasUpload = series.value.some((s) => s.source);
+    await collectDataset({
+      name: `${ind?.name ?? indicator.value}_${yearFrom.value}-${yearTo.value}`,
+      data: {
+        indicator: ind?.name ?? indicator.value,
+        countries: selectedCountries.value,
+        years: years.value,
+        series: series.value.map((s) => ({ country: s.country, values: s.values })),
+        sources: series.value
+          .filter((s) => s.source)
+          .map((s) => ({ name: s.source ?? '', desc: `实体：${s.country}` })),
+      },
+      tags: [indicator.value],
+      sourceType: hasUpload ? (dataset.value ? 'mixed' : 'upload') : 'WDI',
+    });
+    ElMessage.success('已收藏到「我的数据」，可在个人中心查看');
+  } catch (e) {
+    ElMessage.error(e instanceof Error ? e.message : '收藏失败');
+  } finally {
+    collecting.value = false;
+  }
 }
 
 // ===== 生成分析结果（M4.3）=====
@@ -755,8 +788,8 @@ onBeforeUnmount(() => {
             数据上传补充
           </span>
           <span class="flex-1"></span>
-          <span class="op" @click="comingSoon('收藏到我的数据')">
-            <svg class="ic" viewBox="0 0 24 24" fill="none"><path d="M12 3l2.7 5.7 6.3.8-4.6 4.4 1.2 6.2L12 17.3 6.4 20l1.2-6.2L3 9.5l6.3-.8L12 3z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" /></svg>
+          <span class="op" :class="{ disabled: collecting }" @click="collectToMyData">
+            <svg viewBox="0 0 24 24" fill="none"><path d="M12 3.5l2.5 5.6 6.1.6-4.6 4.1 1.3 6-5.3-3.1-5.3 3.1 1.3-6-4.6-4.1 6.1-.6L12 3.5z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" /></svg>
             收藏到我的数据
           </span>
         </div>
@@ -1317,6 +1350,11 @@ onBeforeUnmount(() => {
 .op:hover {
   border-color: #2563eb;
   color: #2563eb;
+}
+
+.op.disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
 }
 
 .op.primary {

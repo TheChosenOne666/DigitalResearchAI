@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   HttpCode,
   HttpStatus,
@@ -171,4 +172,98 @@ export class WorkspaceController {
   saveToKb(@Param('id') id: string, @Body() body: AnalyzeSaveKbBody): Promise<unknown> {
     return this.analyzeService.saveToKb(id, body ?? {});
   }
+
+  // ===== M4.4 我的报告（聚合）=====
+
+  /** 我的报告列表（聚合智搜 + 分析结果） */
+  @Get('reports')
+  @HttpCode(HttpStatus.OK)
+  async listReports(
+    @Query('keyword') keyword?: string,
+    @Query('page') page = '1',
+    @Query('pageSize') pageSize = '20',
+  ): Promise<unknown> {
+    const p = Math.max(1, Number(page) || 1);
+    const size = Math.min(100, Math.max(1, Number(pageSize) || 20));
+    const { list, total } = await this.store.listReports({ keyword, page: p, pageSize: size });
+    return { list, total, page: p, pageSize: size };
+  }
+
+  /** 报告版本列表（type=search 按 session；type=workspace 按报告） */
+  @Get('reports/:id/versions')
+  @HttpCode(HttpStatus.OK)
+  listReportVersions(@Param('id') id: string, @Query('type') type?: string): Promise<unknown> {
+    const t = type === 'workspace' ? 'workspace' : 'search';
+    return this.store.listReportVersions(id, t);
+  }
+
+  // ===== M4.4 我的数据 =====
+
+  /** 我的数据列表（搜索/标签/状态/分页） */
+  @Get('datasets')
+  @HttpCode(HttpStatus.OK)
+  async listDatasets(
+    @Query('keyword') keyword?: string,
+    @Query('tag') tag?: string,
+    @Query('status') status?: string,
+    @Query('page') page = '1',
+    @Query('pageSize') pageSize = '20',
+  ): Promise<unknown> {
+    const p = Math.max(1, Number(page) || 1);
+    const size = Math.min(100, Math.max(1, Number(pageSize) || 20));
+    const { list, total } = await this.store.listDatasets({ keyword, tag, status, page: p, pageSize: size });
+    return { list, total, page: p, pageSize: size };
+  }
+
+  /** 导出清单（CSV） */
+  @Get('datasets/export')
+  @HttpCode(HttpStatus.OK)
+  async exportDatasets(@Res() res: Response): Promise<void> {
+    const { list } = await this.store.listDatasets({ page: 1, pageSize: 10000 });
+    const csv = buildDatasetCsv(list);
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent('我的数据清单.csv')}`);
+    res.end('\ufeff' + csv);
+  }
+
+  /** 收藏到我的数据（快照） */
+  @Post('datasets')
+  @HttpCode(HttpStatus.CREATED)
+  collectDataset(@Body() body: Record<string, unknown>): Promise<unknown> {
+    return this.workspace.collectDataset(body ?? {});
+  }
+
+  /** 归档/恢复（toggle） */
+  @Post('datasets/:id/archive')
+  @HttpCode(HttpStatus.OK)
+  archiveDataset(@Param('id') id: string): Promise<unknown> {
+    return this.store.archiveDataset(id);
+  }
+
+  /** 删除数据集 */
+  @Delete('datasets/:id')
+  @HttpCode(HttpStatus.OK)
+  deleteDataset(@Param('id') id: string): Promise<unknown> {
+    return this.store.deleteDataset(id);
+  }
+}
+
+/** 数据集清单 CSV 生成（纯函数） */
+function buildDatasetCsv(list: Array<{
+  name: string;
+  tags: string[];
+  status: string;
+  sourceType: string;
+  updatedAt: Date;
+}>): string {
+  const head = ['数据名称', '标签', '状态', '来源', '更新时间'];
+  const rows = list.map((d) => [
+    d.name,
+    (d.tags ?? []).join('、'),
+    d.status === 'ARCHIVED' ? '已归档' : '已收藏',
+    d.sourceType,
+    new Date(d.updatedAt).toLocaleString(),
+  ]);
+  const esc = (s: string) => (/[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s);
+  return [head, ...rows].map((r) => r.map(esc).join(',')).join('\n');
 }

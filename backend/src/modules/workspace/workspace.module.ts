@@ -15,5 +15,6 @@ import { AnalyzeService } from './analyze.service';
   imports: [PrismaModule, KbModule, SearchModule],
   controllers: [WorkspaceController],
   providers: [WorkspaceService, WorkspaceStoreService, AnalyzeService],
+  exports: [WorkspaceStoreService],
 })
 export class WorkspaceModule {}

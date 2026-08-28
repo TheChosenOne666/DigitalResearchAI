@@ -66,3 +66,43 @@ describe('WorkspaceService.getDataset', () => {
     expect(res.indicators[0].series[0].values).toEqual({ '2020': 1411 });
   });
 });
+
+describe('WorkspaceService.collectDataset（M4.4 收藏到我的数据）', () => {
+  it('合法入参清洗 tags/sourceType 后落库', async () => {
+    const store = { saveDataset: vi.fn().mockResolvedValue({ id: 'ds1' }) };
+    const svc = new WorkspaceService(store as any);
+    const out = await svc.collectDataset({
+      name: ' GDP 快照 ',
+      data: { series: [] },
+      tags: ['GDP', '', 123],
+      sourceType: 'WDI',
+    });
+    expect(out).toEqual({ id: 'ds1' });
+    expect(store.saveDataset).toHaveBeenCalledWith({
+      name: 'GDP 快照',
+      data: { series: [] },
+      tags: ['GDP'],
+      sourceType: 'WDI',
+    });
+  });
+
+  it('sourceType 非法时回退 mixed，tags 非数组时回退空数组', async () => {
+    const store = { saveDataset: vi.fn().mockResolvedValue({ id: 'ds2' }) };
+    const svc = new WorkspaceService(store as any);
+    await svc.collectDataset({ name: '快照', data: {}, tags: 'not-array', sourceType: 'xxx' });
+    expect(store.saveDataset).toHaveBeenCalledWith({
+      name: '快照',
+      data: {},
+      tags: [],
+      sourceType: 'mixed',
+    });
+  });
+
+  it('缺名称或缺 data 抛业务异常（400）', async () => {
+    const store = { saveDataset: vi.fn() };
+    const svc = new WorkspaceService(store as any);
+    await expect(svc.collectDataset({ name: '', data: {} })).rejects.toThrow();
+    await expect(svc.collectDataset({ name: 'x', data: undefined })).rejects.toThrow();
+    expect(store.saveDataset).not.toHaveBeenCalled();
+  });
+});

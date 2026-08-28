@@ -61,6 +61,12 @@ function toggleUser(): void {
   histOpen.value = false;
 }
 
+/** 头像菜单跳转（我的数据/我的报告） */
+function goMine(path: string): void {
+  userOpen.value = false;
+  router.push(path);
+}
+
 async function onLogout(): Promise<void> {
   await session.logout();
   userOpen.value = false;
@@ -157,6 +163,14 @@ onBeforeUnmount(() => document.removeEventListener('click', closeMenus));
               <span class="um-name">{{ nickname }}</span>
               <span class="um-phone">{{ session.user?.phone ?? '' }}</span>
             </div>
+            <a class="um-item" @click="goMine('/my-data')">
+              <svg class="um-ic" viewBox="0 0 24 24" fill="none"><rect x="3.5" y="3.5" width="7" height="7" rx="1.5" stroke="currentColor" stroke-width="1.7" /><rect x="13.5" y="3.5" width="7" height="7" rx="1.5" stroke="currentColor" stroke-width="1.7" /><rect x="3.5" y="13.5" width="7" height="7" rx="1.5" stroke="currentColor" stroke-width="1.7" /><rect x="13.5" y="13.5" width="7" height="7" rx="1.5" stroke="currentColor" stroke-width="1.7" /></svg>
+              我的数据
+            </a>
+            <a class="um-item" @click="goMine('/my-reports')">
+              <svg class="um-ic" viewBox="0 0 24 24" fill="none"><path d="M6 3.5h9l4 4V20a1.5 1.5 0 0 1-1.5 1.5h-11A1.5 1.5 0 0 1 5 20V5A1.5 1.5 0 0 1 6.5 3.5z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" /><path d="M14.5 3.5V8H19" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" /></svg>
+              我的报告
+            </a>
             <a class="um-item" @click="onLogout">退出登录</a>
           </div>
         </div>
@@ -366,7 +380,9 @@ onBeforeUnmount(() => document.removeEventListener('click', closeMenus));
 }
 
 .um-item {
-  display: block;
+  display: flex;
+  align-items: center;
+  gap: 9px;
   padding: 10px 12px;
   border-radius: 8px;
   font-size: 13.5px;
@@ -376,6 +392,13 @@ onBeforeUnmount(() => document.removeEventListener('click', closeMenus));
 
 .um-item:hover {
   background: #f1f5f9;
+}
+
+.um-ic {
+  width: 15px;
+  height: 15px;
+  color: #94a3b8;
+  flex: 0 0 auto;
 }
 
 .hist-list {
