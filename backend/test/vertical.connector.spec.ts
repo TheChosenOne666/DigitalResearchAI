@@ -7,7 +7,6 @@ import {
   fetchWdi,
   type WdiObservation,
 } from '../src/modules/search/connectors/vertical.connector';
-import type { ConnectorInput } from '../src/modules/search/connectors/connector.interface';
 
 describe('vertical connector 映射', () => {
   it('resolveCountryCodes 中文名→ISO3，未知原样大写', () => {

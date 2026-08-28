@@ -49,7 +49,7 @@ export class KbLearningService {
     await this.clearVectors(tenantId, lib.libraryId, oldVectorIds);
 
     // 3. 解析为纯文本：优先队列载荷中的字节，否则回读落库原件（重学/续学）
-    let buffer = payload.bufferBase64
+    const buffer = payload.bufferBase64
       ? Buffer.from(payload.bufferBase64, 'base64')
       : await this.store.getDocumentFile(tenantId, documentId);
     if (!buffer) {

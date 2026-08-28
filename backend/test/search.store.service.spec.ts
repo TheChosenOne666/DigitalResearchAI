@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { tenantAls } from '../src/common/auth/tenant-context';
 import { SearchStoreService } from '../src/modules/search/persistence/search.store.service';
 import type { SearchHit } from '../src/modules/search/connectors/connector.interface';

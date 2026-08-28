@@ -33,6 +33,7 @@ const MAX_NAME_LEN = 80;
  */
 export function sanitizeSourceName(title: string): string {
   const cleaned = title
+    // eslint-disable-next-line no-control-regex -- 有意剔除文件名中的控制字符（\x00-\x1f）
     .replace(/[\\/:*?"<>|\u0000-\u001f]/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();

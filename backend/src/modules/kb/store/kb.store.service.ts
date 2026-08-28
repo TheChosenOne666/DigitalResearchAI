@@ -408,7 +408,7 @@ export class KbStoreService {
     page: number,
     pageSize: number,
   ): Promise<{ items: PendingReviewItem[]; total: number }> {
-    const { tenantId } = this.requireTenant();
+    this.requireTenant(); // 校验租户上下文存在；查询走 forTenant 自动注入 tenantId
     const where: Prisma.KbDocumentWhereInput = { status: 'PENDING' };
     if (filter.libraryId) where.libraryId = filter.libraryId;
     const skip = Math.max(0, (page - 1) * pageSize);

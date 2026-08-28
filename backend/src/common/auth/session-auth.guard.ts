@@ -6,7 +6,7 @@ import { SessionService, SessionContext } from './session.service';
 import { IS_PUBLIC_KEY } from './public.decorator';
 
 /** 请求上的认证上下文（守卫校验通过后挂载） */
-export interface AuthContext extends SessionContext {}
+export type AuthContext = SessionContext;
 
 /** 自定义请求接口：携带认证上下文 */
 export interface AuthenticatedRequest {

@@ -2,7 +2,6 @@ import { Injectable } from '@nestjs/common';
 import type {
   ConnectorInput,
   SearchConnector,
-  SearchConditions,
   SearchHit,
   SourceType,
 } from './connector.interface';
