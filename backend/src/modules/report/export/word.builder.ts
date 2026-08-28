@@ -21,7 +21,6 @@ import {
 } from 'docx';
 import {
   parseMarkdown,
-  inlineToText,
   type MarkdownBlock,
   type Inline,
 } from './markdown';

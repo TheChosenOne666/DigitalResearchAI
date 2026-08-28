@@ -149,7 +149,7 @@ function renderMarkdown(md: string): string {
     if (TABLE_RE.test(t)) {
       const sep = lines[i + 1]?.trim() ?? '';
       // 分隔行只由 |、空格、冒号、横线组成且含横线（支持多列 `| --- | --- |`）
-      if (/^[\s:|\-]*$/.test(sep) && sep.includes('-')) {
+      if (/^[\s:|-]*$/.test(sep) && sep.includes('-')) {
         const header = splitRow(t);
         i += 2;
         const rows: string[][] = [];
