@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { computed, ref, onMounted, onBeforeUnmount } from 'vue';
+import { computed, ref, onMounted, onBeforeUnmount, watch } from 'vue';
 import { useRouter, useRoute } from 'vue-router';
 import { ElMessage } from 'element-plus';
 import LoginDialog from '@/components/LoginDialog.vue';
 import { useSessionStore } from '@/stores/session';
 import { fetchHistories, type SessionListItem } from '@/api/search';
+import { fetchMemberStatus, type MemberStatus } from '@/api/member';
 
 const router = useRouter();
 const route = useRoute();
@@ -32,6 +33,42 @@ const activeNav = computed(() => {
 
 const nickname = computed(() => session.user?.nickname ?? '用户');
 const avatarChar = computed(() => nickname.value.charAt(0));
+
+/** 会员状态缓存（登录后拉取，用于头像旁会员徽章） */
+const memberStatus = ref<MemberStatus | null>(null);
+const isMember = computed(() => memberStatus.value?.isMember ?? false);
+/** 徽章文案：会员显示等级名，否则「加入会员」 */
+const memberBadgeText = computed(() => (isMember.value ? memberStatus.value!.levelName : '加入会员'));
+/** 徽章悬停提示 */
+const memberBadgeTitle = computed(() => {
+  const m = memberStatus.value;
+  if (m?.isMember && m.expireAt) {
+    return `${m.levelName} · ${m.cycleName ?? ''} · ${m.expireAt.slice(0, 10)} 到期，点击查看 / 续费`;
+  }
+  return '开通会员，解锁 AI 智搜无限次使用';
+});
+
+/** 拉取会员状态（未登录则清空） */
+async function loadMemberStatus(): Promise<void> {
+  if (!session.isLoggedIn) {
+    memberStatus.value = null;
+    return;
+  }
+  try {
+    memberStatus.value = await fetchMemberStatus();
+  } catch {
+    memberStatus.value = null;
+  }
+}
+
+/** 点击会员徽章：未登录先弹登录框，已登录进会员中心 */
+function goVip(): void {
+  if (!session.isLoggedIn) {
+    showLogin.value = true;
+    return;
+  }
+  router.push('/vip');
+}
 
 /** 切换历史下拉并懒加载 */
 async function toggleHist(): Promise<void> {
@@ -82,8 +119,13 @@ function closeMenus(e: MouseEvent): void {
   }
 }
 
-onMounted(() => document.addEventListener('click', closeMenus));
+onMounted(() => {
+  document.addEventListener('click', closeMenus);
+  if (session.isLoggedIn) loadMemberStatus();
+});
 onBeforeUnmount(() => document.removeEventListener('click', closeMenus));
+// 登录态变化时同步会员徽章
+watch(() => session.sessionId, () => loadMemberStatus());
 </script>
 
 <template>
@@ -141,6 +183,18 @@ onBeforeUnmount(() => document.removeEventListener('click', closeMenus));
       </nav>
 
       <div class="tn-right">
+        <span
+          class="tn-pro"
+          :class="isMember ? 'tn-member' : 'tn-join'"
+          :title="memberBadgeTitle"
+          @click="goVip"
+        >
+          <svg class="crown" viewBox="0 0 24 24" fill="none">
+            <path d="m2 8 3.5 4L12 4l6.5 8L22 8l-1.7 11a2 2 0 0 1-2 1.8H5.7a2 2 0 0 1-2-1.8Z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+            <path d="M5.5 19.5h13" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+          </svg>
+          {{ memberBadgeText }}
+        </span>
         <template v-if="!session.isLoggedIn">
           <button class="tn-login-btn" @click="showLogin = true">
             <svg class="ic" viewBox="0 0 24 24" fill="none">
@@ -170,6 +224,18 @@ onBeforeUnmount(() => document.removeEventListener('click', closeMenus));
             <a class="um-item" @click="goMine('/my-reports')">
               <svg class="um-ic" viewBox="0 0 24 24" fill="none"><path d="M6 3.5h9l4 4V20a1.5 1.5 0 0 1-1.5 1.5h-11A1.5 1.5 0 0 1 5 20V5A1.5 1.5 0 0 1 6.5 3.5z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" /><path d="M14.5 3.5V8H19" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" /></svg>
               我的报告
+            </a>
+            <a class="um-item" @click="goMine('/vip')">
+              <svg class="um-ic" viewBox="0 0 24 24" fill="none"><path d="M3 8l4 3 5-6 5 6 4-3v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" /></svg>
+              会员中心
+            </a>
+            <a class="um-item" @click="goMine('/pay')">
+              <svg class="um-ic" viewBox="0 0 24 24" fill="none"><rect x="2.5" y="5.5" width="19" height="13" rx="2.5" stroke="currentColor" stroke-width="1.7" /><path d="M2.5 10h19" stroke="currentColor" stroke-width="1.7" /></svg>
+              结算支付
+            </a>
+            <a class="um-item" @click="goMine('/billing')">
+              <svg class="um-ic" viewBox="0 0 24 24" fill="none"><path d="M6 3.5h9l4 4V20a1.5 1.5 0 0 1-1.5 1.5h-11A1.5 1.5 0 0 1 5 20V5A1.5 1.5 0 0 1 6.5 3.5z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" /><path d="M9 12h6M9 16h4" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" /></svg>
+              账单查询
             </a>
             <a class="um-item" @click="onLogout">退出登录</a>
           </div>
@@ -318,6 +384,41 @@ onBeforeUnmount(() => document.removeEventListener('click', closeMenus));
 
 .tn-login-btn:hover {
   background: #1d4ed8;
+}
+
+/* 头像旁会员徽章（对齐原型 .tn-pro） */
+.tn-pro {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 26px;
+  padding: 0 10px;
+  border-radius: 20px;
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.tn-pro .crown {
+  width: 14px;
+  height: 14px;
+}
+
+.tn-pro.tn-join {
+  border: 1px solid #f59e0b;
+  background: linear-gradient(135deg, #fef3c7, #fde68a);
+  color: #92400e;
+}
+
+.tn-pro.tn-member {
+  border: 1px solid #d97706;
+  background: linear-gradient(135deg, #f59e0b, #d97706);
+  color: #fff;
+}
+
+.tn-pro:hover {
+  box-shadow: 0 2px 8px rgba(217, 119, 6, 0.25);
 }
 
 .nav-user {

@@ -1,10 +1,13 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue';
-import { useRoute } from 'vue-router';
+import { useRoute, useRouter } from 'vue-router';
 import { ElMessage } from 'element-plus';
+import { ErrorCode } from '@app/shared';
 import MarkdownView from '@/components/MarkdownView.vue';
 import LoginDialog from '@/components/LoginDialog.vue';
+import VipGuideDialog from '@/components/VipGuideDialog.vue';
 import { useSessionStore } from '@/stores/session';
+import { ApiError } from '@/api/http';
 import {
   searchStream,
   type SearchConditions,
@@ -21,11 +24,15 @@ import {
 } from '@/api/kb';
 
 const route = useRoute();
+const router = useRouter();
 const session = useSessionStore();
 
 /** 访客检索引导登录弹窗 + 待检索问题（登录成功后自动续跑） */
 const loginVisible = ref(false);
 const pendingQuestion = ref('');
+
+/** 免费体验配额耗尽引导（M5.3：后端返回 4003 时弹出） */
+const vipGuideVisible = ref(false);
 
 /** 阶段顺序（5 阶段动画） */
 const STAGES: Array<{ key: SearchStage; label: string }> = [
@@ -287,6 +294,11 @@ function startSearch(): void {
   )
     .catch((err: unknown) => {
       if (err instanceof DOMException && err.name === 'AbortError') return;
+      // 免费体验配额已用尽 → 弹开通会员引导（不展示为检索错误）
+      if (err instanceof ApiError && err.code === ErrorCode.QUOTA_EXCEEDED) {
+        vipGuideVisible.value = true;
+        return;
+      }
       errorMsg.value = err instanceof Error ? err.message : '连接中断';
     })
     .finally(() => {
@@ -635,6 +647,13 @@ onBeforeUnmount(() => abortCtrl.value?.abort());
 
     <!-- 访客检索引导登录（对齐原型 9.31：落地页可看，检索需登录） -->
     <LoginDialog v-if="loginVisible" @success="onLoginSuccess" @close="loginVisible = false" />
+
+    <!-- 免费体验配额耗尽引导（M5.3） -->
+    <VipGuideDialog
+      v-if="vipGuideVisible"
+      @close="vipGuideVisible = false"
+      @go-vip="vipGuideVisible = false; router.push('/vip')"
+    />
   </div>
 </template>
 

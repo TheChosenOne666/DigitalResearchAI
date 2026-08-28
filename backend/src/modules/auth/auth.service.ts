@@ -65,6 +65,25 @@ export class AuthService {
     return this.buildLoginResult(user);
   }
 
+  /**
+   * 开发期免验证码登录（绕过短信 60s 限流，仅供联调/测试环境使用）。
+   * 由 controller 用 DEV_LOGIN_ENABLED 环境变量守卫，生产环境不暴露。
+   * 逻辑与 smsLogin 一致，仅跳过验证码校验。
+   */
+  async devLogin(phone: string): Promise<LoginResult> {
+    let user = await this.findUserWithRoles(phone);
+    if (!user) {
+      user = await this.createUserWithTenant(phone);
+      this.logger.log(`[DEV] 新用户自动注册: phone=***${phone.slice(-4)} userId=${user.id}`);
+    }
+    this.assertActive(user);
+
+    await this.prisma.user.update({ where: { id: user.id }, data: { lastLoginAt: new Date() } });
+    await this.auditLogin(user.id, user.tenantId, 'DEV');
+    this.logger.warn(`[DEV] 开发期免验证码登录: phone=***${phone.slice(-4)}`);
+    return this.buildLoginResult(user);
+  }
+
   /** 账号密码登录 */
   async passwordLogin(phone: string, password: string): Promise<LoginResult> {
     const user = await this.findUserWithRoles(phone);

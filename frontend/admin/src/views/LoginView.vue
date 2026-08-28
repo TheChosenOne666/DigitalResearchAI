@@ -1,15 +1,49 @@
 <script setup lang="ts">
-import { reactive } from 'vue';
+import { reactive, ref } from 'vue';
+import { useRouter, useRoute } from 'vue-router';
 import { ElMessage } from 'element-plus';
+import { useSessionStore } from '@/stores/session';
+import { ApiError } from '@/api/http';
+import { ErrorCode } from '@app/shared';
 
-const form = reactive({ account: '', password: '' });
+const router = useRouter();
+const route = useRoute();
+const store = useSessionStore();
 
-function onLogin() {
-  if (!form.account || !form.password) {
-    ElMessage.warning('请输入账号与密码');
+const form = reactive({ phone: '', password: '' });
+const loading = ref(false);
+
+async function onLogin() {
+  if (!/^1[3-9]\d{9}$/.test(form.phone)) {
+    ElMessage.warning('请输入正确的管理员手机号');
     return;
   }
-  ElMessage.info('管理端登录与 RBAC 将在 M1 接入');
+  if (!form.password) {
+    ElMessage.warning('请输入密码');
+    return;
+  }
+  loading.value = true;
+  try {
+    await store.login(form.phone, form.password);
+    const redirect = (route.query.redirect as string) || '/dashboard';
+    router.push(redirect);
+  } catch (e) {
+    if (e instanceof ApiError) {
+      if (e.code === ErrorCode.FORBIDDEN) {
+        ElMessage.error('该账号无管理端权限');
+      } else if (e.code === ErrorCode.LOGIN_FAILED) {
+        ElMessage.error('账号或密码错误');
+      } else if (e.code === ErrorCode.ACCOUNT_DISABLED) {
+        ElMessage.error('账号已被禁用');
+      } else {
+        ElMessage.error(e.message || '登录失败');
+      }
+    } else {
+      ElMessage.error('登录失败，请稍后重试');
+    }
+  } finally {
+    loading.value = false;
+  }
 }
 </script>
 
@@ -18,13 +52,8 @@ function onLogin() {
     <div class="login-card">
       <div class="brand">
         <svg class="brand-logo" viewBox="0 0 32 32" aria-hidden="true">
-          <rect width="32" height="32" rx="7" fill="#1E4FBC" />
-          <path
-            d="M8 22v-6M14 22V10M20 22v-9M26 22v-4"
-            stroke="#fff"
-            stroke-width="2.6"
-            stroke-linecap="round"
-          />
+          <rect width="32" height="32" rx="7" fill="#409eff" />
+          <path d="M8 22v-6M14 22V10M20 22v-9M26 22v-4" stroke="#fff" stroke-width="2.6" stroke-linecap="round" />
         </svg>
         <div>
           <div class="brand-name">
@@ -35,7 +64,7 @@ function onLogin() {
         </div>
       </div>
 
-      <el-input v-model="form.account" size="large" placeholder="请输入管理员账号">
+      <el-input v-model="form.phone" size="large" maxlength="11" placeholder="请输入管理员手机号">
         <template #prefix>
           <svg class="input-icon" viewBox="0 0 24 24" fill="none">
             <circle cx="12" cy="8" r="4" stroke="currentColor" stroke-width="1.6" />
@@ -61,7 +90,7 @@ function onLogin() {
         </template>
       </el-input>
 
-      <el-button type="primary" size="large" class="login-btn" @click="onLogin">登 录</el-button>
+      <el-button type="primary" size="large" class="login-btn" :loading="loading" @click="onLogin">登 录</el-button>
       <div class="agreement">仅限平台管理员 / 数据管理员访问</div>
     </div>
   </div>
@@ -69,11 +98,12 @@ function onLogin() {
 
 <style scoped>
 .login-page {
-  min-height: 100%;
+  min-height: 100vh;
   display: flex;
   align-items: center;
   justify-content: center;
   padding: 24px;
+  background: linear-gradient(135deg, #f0f5fb 0%, #e8f0f8 100%);
 }
 
 .login-card {
@@ -81,7 +111,7 @@ function onLogin() {
   background: #fff;
   border-radius: 14px;
   border: 1px solid #eef2f7;
-  box-shadow: 0 8px 30px rgba(30, 41, 59, 0.06);
+  box-shadow: 0 8px 30px rgba(30, 41, 59, 0.08);
   padding: 36px 36px 28px;
 }
 
@@ -111,8 +141,8 @@ function onLogin() {
 .brand-badge {
   font-size: 11px;
   font-weight: 500;
-  color: #2563eb;
-  background: #e9effd;
+  color: #409eff;
+  background: #ecf5ff;
   border-radius: 6px;
   padding: 2px 8px;
 }

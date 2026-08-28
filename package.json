@@ -13,6 +13,7 @@
     "dev:admin": "pnpm --filter @app/admin dev",
     "build": "pnpm --filter @app/shared build && pnpm --filter @app/api build && pnpm --filter @app/web build && pnpm --filter @app/admin build",
     "test": "pnpm --filter @app/api test",
+    "seed:admin": "pnpm --filter @app/api exec node prisma/seed-admin.ts",
     "lint": "eslint .",
     "format": "prettier --write \"apps/*/src/**/*.{ts,vue,css}\" \"packages/*/src/**/*.ts\""
   },

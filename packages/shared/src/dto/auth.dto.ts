@@ -28,9 +28,16 @@ export const PasswordLoginSchema = z.object({
   password: z.string().min(6, '密码至少 6 位').max(64, '密码最多 64 位'),
 });
 
+/** 开发期免验证码登录请求（仅 DEV_LOGIN_ENABLED=true 时开放，用于联调绕过短信限流） */
+export const DevLoginSchema = z.object({
+  /** 登录手机号 */
+  phone: z.string().regex(CN_PHONE_REGEX, '手机号格式不正确'),
+});
+
 export type SmsSend = z.infer<typeof SmsSendSchema>;
 export type SmsLogin = z.infer<typeof SmsLoginSchema>;
 export type PasswordLogin = z.infer<typeof PasswordLoginSchema>;
+export type DevLogin = z.infer<typeof DevLoginSchema>;
 
 /** 登录成功响应数据（Redis session 方案：返回 sessionId） */
 export interface LoginResult {

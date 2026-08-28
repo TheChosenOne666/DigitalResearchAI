@@ -7,6 +7,9 @@ import AnalyzeResultView from '@/views/AnalyzeResultView.vue';
 import MyDataView from '@/views/MyDataView.vue';
 import MyReportsView from '@/views/MyReportsView.vue';
 import SearchReportView from '@/views/SearchReportView.vue';
+import VipView from '@/views/VipView.vue';
+import PayView from '@/views/PayView.vue';
+import BillingView from '@/views/BillingView.vue';
 import { useSessionStore } from '@/stores/session';
 
 /** 路由元信息扩展：requiresAuth=true 表示该路由需登录 */
@@ -45,6 +48,10 @@ const router = createRouter({
       component: SearchReportView,
       meta: { requiresAuth: true },
     },
+    // M5 会员中心 / 结算支付 / 账单查询（受登录门禁保护）
+    { path: '/vip', name: 'vip', component: VipView, meta: { requiresAuth: true } },
+    { path: '/pay', name: 'pay', component: PayView, meta: { requiresAuth: true } },
+    { path: '/billing', name: 'billing', component: BillingView, meta: { requiresAuth: true } },
   ],
 });
 

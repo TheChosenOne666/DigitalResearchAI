@@ -41,21 +41,60 @@ function deps() {
     upsertUsage: vi.fn(),
     listSessions: vi.fn(),
     reportDetail: vi.fn(),
+    // M6.3：敏感词前置拦截（默认不命中）+ 搜索词统计
+    checkSensitiveWord: vi.fn().mockResolvedValue(null),
+    trackSearchTerm: vi.fn().mockResolvedValue(undefined),
   };
   const kb = { saveSourcesToLibrary: vi.fn() };
+  // M5.3 免费体验配额：默认放行
+  const quota = { consumeTrial: vi.fn().mockResolvedValue({ allowed: true, trialLeft: null }) };
   const ctrl = new SearchController(
     search as any,
     intent as any,
     generate as any,
     store as any,
     kb as any,
+    quota as any,
   );
-  return { ctrl, search, intent, generate, store, kb };
+  return { ctrl, search, intent, generate, store, kb, quota };
 }
 
 describe('SearchController.stream', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
+  });
+
+  it('免费体验配额耗尽（M5.3）：不写 SSE 响应头，直接抛 4003', async () => {
+    const { ctrl, quota } = deps();
+    quota.consumeTrial.mockRejectedValueOnce(
+      new BizException(ErrorCode.QUOTA_EXCEEDED, '免费体验次数已用完，开通会员可无限次使用', 402),
+    );
+    const { res } = fakeRes();
+    await expect(ctrl.stream(req(), res as any, '问题')).rejects.toMatchObject({ bizCode: 4003 });
+    // 拦截发生在响应头写出之前，前端可按统一业务码弹开通引导
+    expect(res.setHeader).not.toHaveBeenCalled();
+  });
+
+  it('敏感词命中（M6.3/D8）：不写 SSE 响应头，直接抛 FORBIDDEN', async () => {
+    const { ctrl, store, quota } = deps();
+    store.checkSensitiveWord.mockResolvedValueOnce('违禁词');
+    const { res } = fakeRes();
+    await expect(ctrl.stream(req(), res as any, '违禁词')).rejects.toMatchObject({ bizCode: 2001 });
+    expect(res.setHeader).not.toHaveBeenCalled();
+    // 敏感词拦截在配额校验之前，命中后不消耗配额
+    expect(quota.consumeTrial).not.toHaveBeenCalled();
+  });
+
+  it('配额放行后才进入智搜管道', async () => {
+    const { ctrl, quota, intent, search, generate, store } = deps();
+    intent.classify.mockResolvedValue({});
+    search.search.mockResolvedValue({ cited: [], referenced: [] });
+    generate.stream.mockResolvedValue({ fullText: '', tokenUsage: 0 });
+    store.createSession.mockResolvedValue({ id: 's1' });
+    const { res } = fakeRes();
+    await ctrl.stream(req(), res as any, '问题');
+    expect(quota.consumeTrial).toHaveBeenCalledWith('u1', ['USER']);
+    expect(res.setHeader).toHaveBeenCalled();
   });
 
   it('五阶段编排：intent→检索→融合→生成→done，含落库', async () => {
@@ -93,6 +132,8 @@ describe('SearchController.stream', () => {
     // 落库
     expect(store.saveReport).toHaveBeenCalledWith('s1', expect.objectContaining({ contentMd: '报告', tokenUsage: 8 }));
     expect(store.upsertUsage).toHaveBeenCalledWith('u1', 8);
+    // M6.3 搜索词统计：有结果（cited+referenced>0）→ empty=false
+    expect(store.trackSearchTerm).toHaveBeenCalledWith('美国 GDP', false);
     expect(f.res.end).toHaveBeenCalled();
   });
 
@@ -141,6 +182,8 @@ describe('SearchController.stream', () => {
 
     const f = fakeRes();
     const p = ctrl.stream(req(), f.res, 'q', 'hybrid', undefined);
+    // 等待拦截（M5.3 配额校验）与 close 绑定完成，再模拟客户端断开
+    await new Promise((resolve) => setImmediate(resolve));
     f.triggerClose();
     await p;
     expect(f.res.end).toHaveBeenCalled();

@@ -55,6 +55,18 @@ interface UploadedDoc {
 }
 
 /**
+ * 还原 multer 强转的原始文件名编码。
+ * multer 1.x（@nestjs/platform-express 内置）在解析 multipart filename 时按 latin1
+ * 逐字节解码，中文（UTF-8）文件名会被强转成 mojibake（如「教程」→「æå」）。
+ * 此处按 latin1 还原字节、再按 UTF-8 解码，得到正确中文；纯 ASCII 文件名（字节 < 0x80）
+ * 转换前后等价，无副作用。
+ * 注意：若将来升级 multer 2.x（busboy 1.x 已按 UTF-8 正确解码 filename），应直接透传。
+ */
+export function decodeUploadFilename(originalname: string): string {
+  return Buffer.from(originalname, 'latin1').toString('utf8');
+}
+
+/**
  * 知识库控制器（M3.1 库/分组/文档 CRUD → M3.2 上传/重学 → M3.4 召回测试 + 审核队列）。
  * 全部路由受租户行级隔离保护（prisma forTenant 自动注入 tenant_id）；
  * 审核三端点限 DATA_ADMIN / PLATFORM_ADMIN。
@@ -173,7 +185,7 @@ export class KbController {
     if (!file) {
       throw new BizException(ErrorCode.PARAM_MISSING, '缺少上传文件', HttpStatus.BAD_REQUEST);
     }
-    return this.kb.uploadDocument(id, groupId ?? null, file.originalname, file.buffer);
+    return this.kb.uploadDocument(id, groupId ?? null, decodeUploadFilename(file.originalname), file.buffer);
   }
 
   @Post('libraries/:id/documents/:did/relearn')

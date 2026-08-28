@@ -26,6 +26,7 @@ import { IntentService } from './intent/intent.service';
 import { GenerateService } from './generate/generate.service';
 import { SearchStoreService } from './persistence/search.store.service';
 import { KbService } from '../kb/kb.service';
+import { QuotaService } from '../member/quota.service';
 import {
   serializeSse,
   type SseCondFill,
@@ -83,6 +84,7 @@ export class SearchController {
     private readonly generate: GenerateService,
     private readonly store: SearchStoreService,
     private readonly kb: KbService,
+    private readonly quota: QuotaService,
   ) {}
 
   @Get('stream')
@@ -93,6 +95,17 @@ export class SearchController {
     @Query('mode') mode: SearchMode = 'hybrid',
     @Query('conditions') conditionsJson?: string,
   ): Promise<void> {
+    const user = req.user!;
+    // 敏感词前置拦截（D8/M6.3）：命中启用敏感词即阻断该次检索并落审计，
+    // 必须在 SSE 响应头写出前拦截，前端才能按统一业务码提示。
+    const blocked = await this.store.checkSensitiveWord(question);
+    if (blocked) {
+      throw new BizException(ErrorCode.FORBIDDEN, '内容包含敏感词，本次检索已拦截', HttpStatus.FORBIDDEN);
+    }
+    // 免费体验配额拦截（M5.3）：非会员仅 1 次；必须在 SSE 响应头写出前拦截，
+    // 否则配额耗尽只能以 SSE error 事件表达，前端无法统一按业务码弹开通引导。
+    await this.quota.consumeTrial(user.userId, user.roles);
+
     res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
     res.setHeader('Cache-Control', 'no-cache');
     res.setHeader('Connection', 'keep-alive');
@@ -104,7 +117,6 @@ export class SearchController {
     const send = (event: Parameters<typeof serializeSse>[0], data: unknown) =>
       res.write(serializeSse(event, data));
 
-    const user = req.user!;
     let stage: SseStage['stage'] = 'intent';
     let reportId = '';
 
@@ -124,6 +136,9 @@ export class SearchController {
       send('stage', { stage, msg: '检索中' } satisfies SseStage);
       const input: ConnectorInput = { question, conditions };
       const result = await this.search.search(input, ac.signal, undefined, ROUTES_BY_MODE[mode]);
+
+      // 搜索词统计（A-10）：每次检索累计频次，无结果时累计 emptyCount（平台级公共表）
+      await this.store.trackSearchTerm(question, result.cited.length + result.referenced.length === 0);
 
       stage = 'fusing';
       send('stage', { stage, msg: '融合中' } satisfies SseStage);

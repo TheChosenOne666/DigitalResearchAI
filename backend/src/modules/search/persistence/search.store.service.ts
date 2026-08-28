@@ -122,6 +122,67 @@ export class SearchStoreService {
     return { id: report.id };
   }
 
+  /**
+   * 搜索词统计落库（A-10 数据来源）：upsert search_terms（平台级公共表，走系统 client）。
+   * totalCount 每次检索 +1；emptyCount 当本次检索返回结果为 0 时 +1。
+   * @param term 搜索词
+   * @param empty 本次检索结果是否为空
+   */
+  async trackSearchTerm(term: string, empty: boolean): Promise<void> {
+    const t = term.trim();
+    if (!t) return;
+    try {
+      await this.prisma.searchTerm.upsert({
+        where: { term: t },
+        create: {
+          term: t,
+          totalCount: 1,
+          emptyCount: empty ? 1 : 0,
+          lastSearchedAt: new Date(),
+        },
+        update: {
+          totalCount: { increment: 1 },
+          emptyCount: { increment: empty ? 1 : 0 },
+          lastSearchedAt: new Date(),
+        },
+      });
+    } catch (e) {
+      this.logger.warn(`搜索词统计落库失败：${(e as Error).message}`);
+    }
+  }
+
+  /**
+   * 敏感词前置拦截（D8）：命中任一启用敏感词时累加命中次数、落审计并返回命中的词。
+   * 未命中返回 null；拦截由调用方（search.controller）抛异常阻断该次检索。
+   */
+  async checkSensitiveWord(question: string): Promise<string | null> {
+    const q = question.trim();
+    if (!q) return null;
+    const words = await this.prisma.sensitiveWord.findMany({ where: { enabled: true } });
+    const hit = words.find((w) => q.toLowerCase().includes(w.word.toLowerCase()));
+    if (!hit) return null;
+
+    const ctx = getTenantContext();
+    await Promise.allSettled([
+      this.prisma.sensitiveWord.update({
+        where: { id: hit.id },
+        data: { hitCount: { increment: 1 } },
+      }),
+      this.prisma.auditLog.create({
+        data: {
+          tenantId: ctx?.tenantId ?? null,
+          userId: ctx?.userId ?? null,
+          action: 'SEARCH_BLOCKED',
+          targetType: 'SENSITIVE_WORD',
+          targetId: hit.id,
+          detail: { word: hit.word, question: q },
+        },
+      }),
+    ]);
+    this.logger.warn(`敏感词命中拦截: word=${hit.word} userId=${ctx?.userId ?? '-'}`);
+    return hit.word;
+  }
+
   /** 用量计数：按天累加（searchCount+1，tokenUsage 累加）。无租户上下文时跳过，不阻断主流程 */
   async upsertUsage(userId: string, tokenUsage: number): Promise<void> {
     const ctx = getTenantContext();

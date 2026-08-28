@@ -9,6 +9,8 @@ import { SearchModule } from './modules/search/search.module';
 import { KbModule } from './modules/kb/kb.module';
 import { WorkspaceModule } from './modules/workspace/workspace.module';
 import { ReportModule } from './modules/report/report.module';
+import { MemberModule } from './modules/member/member.module';
+import { AdminModule } from './modules/admin/admin.module';
 import { SessionService } from './common/auth/session.service';
 import { RedisSessionStore } from './common/auth/redis-session.store';
 import { SessionAuthGuard } from './common/auth/session-auth.guard';
@@ -20,7 +22,17 @@ import { TenantContextInterceptor } from './common/auth/tenant-context.intercept
  * 会话认证守卫（@Public 跳过）→ RBAC 角色守卫（@Roles 校验）→ 租户上下文拦截器。
  */
 @Module({
-  imports: [ConfigModule.forRoot({ isGlobal: true }), HealthModule, AuthModule, SearchModule, KbModule, WorkspaceModule, ReportModule],
+  imports: [
+    ConfigModule.forRoot({ isGlobal: true }),
+    HealthModule,
+    AuthModule,
+    SearchModule,
+    KbModule,
+    WorkspaceModule,
+    ReportModule,
+    MemberModule,
+    AdminModule,
+  ],
   providers: [
     { provide: APP_INTERCEPTOR, useClass: TransformInterceptor },
     { provide: APP_FILTER, useClass: AllExceptionsFilter },

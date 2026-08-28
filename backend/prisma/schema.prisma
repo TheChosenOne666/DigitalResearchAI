@@ -54,6 +54,12 @@ model User {
   passwordHash String?    @map("password_hash")
   /// 昵称
   nickname     String     @db.VarChar(64)
+  /// 用户名（登录名展示，唯一；短信注册用户可为空）
+  username     String?    @unique @db.VarChar(64)
+  /// 姓名
+  realName     String?    @map("real_name") @db.VarChar(64)
+  /// 所属组织（展示用，自由文本）
+  organization String?    @db.VarChar(128)
   status       UserStatus @default(ACTIVE)
   /// 最近登录时间
   lastLoginAt  DateTime?  @map("last_login_at")
@@ -421,6 +427,203 @@ model WorkspaceReport {
   @@map("workspace_reports")
 }
 
+// ===== M5 会员计费域（套餐/订阅/订单/支付流水/免费体验配额） =====
+
+/// 会员等级（FREE 表示无会员）
+enum MemberLevel {
+  /// 免费用户（非会员）
+  FREE
+  /// 专业版
+  PRO
+  /// 企业版
+  ENTERPRISE
+}
+
+/// 购买周期
+enum PlanCycle {
+  /// 单月（单次购买，随用随付）
+  SINGLE
+  /// 连续包月（每月自动续费）
+  MONTHLY
+  /// 年付
+  YEAR
+}
+
+/// 订单状态机：PENDING → PAID（终态）/ CANCELLED / CLOSED / FAILED；PAID → REFUNDED（M6 管理端退款）
+enum OrderStatus {
+  /// 待支付
+  PENDING
+  /// 已支付（终态）
+  PAID
+  /// 已取消
+  CANCELLED
+  /// 已关闭（超时未支付）
+  CLOSED
+  /// 支付失败（回调异常）
+  FAILED
+  /// 已退款（M6 A-20）
+  REFUNDED
+}
+
+/// 支付渠道
+enum PayChannel {
+  /// 开发/联调用模拟渠道（HMAC 验签）
+  MOCK
+  /// 微信支付
+  WECHAT
+  /// 支付宝
+  ALIPAY
+}
+
+/// 会员套餐（平台级公共数据，全租户共享，不纳入租户隔离）
+model MemberPlan {
+  /// 主键
+  id String @id @default(cuid()) @db.VarChar(32)
+  /// 套餐编码（唯一，如 PRO_MONTHLY）
+  code String @unique @db.VarChar(32)
+  /// 会员等级
+  level MemberLevel
+  /// 购买周期
+  cycle PlanCycle
+  /// 展示名（如「专业版 · 连续包月」）
+  name String @db.VarChar(64)
+  /// 卖点标签（如「个人研究首选」）
+  tag String? @db.VarChar(64)
+  /// 售价（分）
+  priceCents Int @map("price_cents")
+  /// 划线原价（分，仅年付有）
+  originPriceCents Int? @map("origin_price_cents")
+  /// 周期角标（如「最推荐」）
+  badge String? @db.VarChar(32)
+  /// 权益列表（字符串数组），JSON
+  features Json?
+  /// 同等级内排序（单月→连续包月→年付）
+  sort Int @default(0)
+  /// 是否上架（M6 管理端可停用）
+  enabled Boolean @default(true)
+  /// 创建时间
+  createdAt DateTime @default(now()) @map("created_at")
+  /// 更新时间
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("member_plans")
+}
+
+/// 用户会员订阅（每用户一条，记录当前会员态与到期时间）
+model MemberSubscription {
+  /// 主键
+  id String @id @default(cuid()) @db.VarChar(32)
+  /// 归属租户（行级隔离）
+  tenantId String @map("tenant_id") @db.VarChar(32)
+  /// 用户（一人一条）
+  userId String @unique @map("user_id") @db.VarChar(32)
+  /// 当前等级（无会员为 FREE）
+  level MemberLevel @default(FREE)
+  /// 当前周期（FREE 时为空）
+  cycle PlanCycle?
+  /// 到期时间
+  expireAt DateTime? @map("expire_at")
+  /// 连续包月自动续费开关
+  autoRenew Boolean @default(false) @map("auto_renew")
+  /// 累计开通期数
+  totalPeriods Int @default(0) @map("total_periods")
+  /// 创建时间
+  createdAt DateTime @default(now()) @map("created_at")
+  /// 更新时间
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([tenantId, expireAt])
+  @@map("member_subscriptions")
+}
+
+/// 会员订单（一期一单；连续包月每期一单）
+model MemberOrder {
+  /// 主键
+  id String @id @default(cuid()) @db.VarChar(32)
+  /// 归属租户（行级隔离）
+  tenantId String @map("tenant_id") @db.VarChar(32)
+  /// 下单用户
+  userId String @map("user_id") @db.VarChar(32)
+  /// 业务订单号（对外暴露，唯一）
+  orderNo String @unique @map("order_no") @db.VarChar(32)
+  /// 所属套餐
+  planId String @map("plan_id") @db.VarChar(32)
+  /// 下单时套餐快照（编码/名称/等级/周期/金额），JSON
+  planSnapshot Json @map("plan_snapshot")
+  /// 金额（分）
+  amountCents Int @map("amount_cents")
+  /// 支付渠道
+  channel PayChannel @default(MOCK)
+  /// 订单状态
+  status OrderStatus @default(PENDING)
+  /// 支付成功后生效的会员区间起
+  periodStart DateTime? @map("period_start")
+  /// 支付成功后生效的会员区间止
+  periodEnd DateTime? @map("period_end")
+  /// 渠道预支付参数（MOCK 为收银台地址），JSON
+  payInfo Json? @map("pay_info")
+  /// 支付时间
+  paidAt DateTime? @map("paid_at")
+  /// 订单失效时间（超时未支付自动关单）
+  expireAt DateTime? @map("expire_at")
+  /// 是否为自动续费生成的订单
+  isRenewal Boolean @default(false) @map("is_renewal")
+  /// 创建时间
+  createdAt DateTime @default(now()) @map("created_at")
+  /// 更新时间
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([tenantId, createdAt])
+  @@index([userId, status])
+  @@map("member_orders")
+}
+
+/// 支付流水（一笔订单一次成功回调；transactionNo 唯一保证幂等）
+model PaymentRecord {
+  /// 主键
+  id String @id @default(cuid()) @db.VarChar(32)
+  /// 归属租户（行级隔离）
+  tenantId String @map("tenant_id") @db.VarChar(32)
+  /// 所属订单
+  orderId String @map("order_id") @db.VarChar(32)
+  /// 订单号（冗余，便于账单查询）
+  orderNo String @map("order_no") @db.VarChar(32)
+  /// 渠道流水号（唯一，幂等键）
+  transactionNo String @unique @map("transaction_no") @db.VarChar(64)
+  /// 支付渠道
+  channel PayChannel
+  /// 金额（分）
+  amountCents Int @map("amount_cents")
+  /// 回调原始报文，JSON
+  rawPayload Json? @map("raw_payload")
+  /// 流水状态（SUCCESS / FAILED）
+  status String @default("SUCCESS") @db.VarChar(16)
+  /// 支付时间
+  paidAt DateTime @default(now()) @map("paid_at")
+  /// 创建时间
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([tenantId, createdAt])
+  @@index([orderId])
+  @@map("payment_records")
+}
+
+/// 免费体验配额（终身 1 次；Redis 为主，本表持久化兜底与对账）
+model TrialQuota {
+  /// 主键
+  id String @id @default(cuid()) @db.VarChar(32)
+  /// 归属租户（行级隔离）
+  tenantId String @map("tenant_id") @db.VarChar(32)
+  /// 用户（一人一条）
+  userId String @unique @map("user_id") @db.VarChar(32)
+  /// 已用次数
+  usedCount Int @default(0) @map("used_count")
+  /// 更新时间
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("trial_quota")
+}
+
 /// 我的数据（收藏的工作台数据集快照，M4.4）
 model WorkspaceDataset {
   /// 主键
@@ -446,4 +649,500 @@ model WorkspaceDataset {
 
   @@index([tenantId, createdAt])
   @@map("workspace_datasets")
+}
+
+// ===== M6 管理端域（平台级公共数据，全租户共享，一律不登记 TENANT_MODELS） =====
+// 说明：管理端为跨租户应用，统一注入 PrismaService 本体（系统 client）访问，不经过租户 Extension。
+// 含 tenantId 字段的表（datasets / import_tasks / messages）仅作归属标记，不做行级强制注入。
+
+/// 系统参数（A-12）· 备份策略（A-15）· 知识库默认权限（A-18）
+model SysConfig {
+  /// 参数键
+  key       String   @id @db.VarChar(64)
+  /// 参数值（统一字符串存储，读取侧按类型解析）
+  value     String   @db.VarChar(512)
+  /// 展示名
+  label     String   @db.VarChar(128)
+  /// 说明
+  remark    String?  @db.VarChar(512)
+  /// 最近修改人
+  updatedBy String?  @map("updated_by") @db.VarChar(32)
+  /// 更新时间
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("sys_configs")
+}
+
+/// 标准指标（A-05）
+model Indicator {
+  /// 主键
+  id String @id @default(cuid()) @db.VarChar(32)
+  /// 指标编码（全局唯一）
+  code String @unique @db.VarChar(64)
+  /// 指标名称
+  name String @db.VarChar(128)
+  /// 分类（宏观经济/对外贸易/行业数据/能源…）
+  category String @db.VarChar(64)
+  /// 单位
+  unit String @db.VarChar(32)
+  /// 定义 / 口径
+  definition String? @db.VarChar(512)
+  /// 是否启用（停用不影响历史数据）
+  enabled Boolean @default(true)
+  /// 创建时间
+  createdAt DateTime @default(now()) @map("created_at")
+  /// 更新时间
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  mappings IndicatorMapping[]
+
+  @@map("indicators")
+}
+
+/// 指标来源映射（A-05，支撑全维度数据标准化）
+model IndicatorMapping {
+  /// 主键
+  id String @id @default(cuid()) @db.VarChar(32)
+  /// 所属指标
+  indicatorId String @map("indicator_id") @db.VarChar(32)
+  /// 数据源名称（世界银行 WDI / IMF / 国家统计局…）
+  sourceName String @map("source_name") @db.VarChar(128)
+  /// 来源字段
+  sourceField String @map("source_field") @db.VarChar(128)
+  /// 换算/处理方式（直接映射 / 百分比转换…）
+  transform String? @db.VarChar(128)
+  /// 是否启用
+  enabled Boolean @default(true)
+  /// 创建时间
+  createdAt DateTime @default(now()) @map("created_at")
+
+  indicator Indicator @relation(fields: [indicatorId], references: [id], onDelete: Cascade)
+
+  @@index([indicatorId])
+  @@map("indicator_mappings")
+}
+
+/// 字典类型（国家地区 / 机构 / 行业 / 单位 / 时间粒度）
+enum DictType {
+  COUNTRY
+  ORG
+  INDUSTRY
+  UNIT
+  TIME
+}
+
+/// 基础字典项（A-06，五类字典共用一张表，按 type 区分）
+model DictItem {
+  /// 主键
+  id String @id @default(cuid()) @db.VarChar(32)
+  /// 字典类型
+  type DictType
+  /// 编码（同类型内唯一）
+  code String @db.VarChar(64)
+  /// 名称
+  name String @db.VarChar(128)
+  /// 英文名
+  nameEn String? @map("name_en") @db.VarChar(128)
+  /// 上级编码（行业分层）
+  parentCode String? @map("parent_code") @db.VarChar(64)
+  /// 说明
+  remark String? @db.VarChar(255)
+  /// 排序
+  sort Int @default(0)
+  /// 是否启用（被引用时建议停用代替删除）
+  enabled Boolean @default(true)
+  /// 创建时间
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@unique([type, code])
+  @@map("dict_items")
+}
+
+/// 数据集来源
+enum DatasetSource {
+  /// 数据接入审核入库
+  IMPORT
+  /// 用户上传
+  UPLOAD
+  /// 系统采集
+  COLLECT
+}
+
+/// 数据集资产（A-07；平台公共数据集 tenantId 为空）
+model Dataset {
+  /// 主键
+  id String @id @default(cuid()) @db.VarChar(32)
+  /// 归属租户（组织数据集；平台公共为 null）
+  tenantId String? @map("tenant_id") @db.VarChar(32)
+  /// 数据集名称
+  name String @db.VarChar(255)
+  /// 来源
+  source DatasetSource
+  /// 分类
+  category String? @db.VarChar(64)
+  /// 字段数
+  fieldCount Int @default(0) @map("field_count")
+  /// 上下架状态（ONLINE / OFFLINE）
+  status String @default("ONLINE") @db.VarChar(16)
+  /// 扩展元数据（时间范围/覆盖国家等），JSON
+  meta Json?
+  /// 创建时间
+  createdAt DateTime @default(now()) @map("created_at")
+  /// 更新时间
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([status, createdAt])
+  @@map("datasets")
+}
+
+/// 导入任务类型（A-08）
+enum ImportTaskType {
+  EXCEL
+  CSV
+  DATABASE
+  API
+}
+
+/// 导入审核状态（A-08）
+enum ImportStatus {
+  /// 待审核
+  PENDING
+  /// 已通过
+  APPROVED
+  /// 已退回
+  REJECTED
+}
+
+/// 数据接入审核任务（A-08）
+model ImportTask {
+  /// 主键
+  id String @id @default(cuid()) @db.VarChar(32)
+  /// 提交人所属租户
+  tenantId String @map("tenant_id") @db.VarChar(32)
+  /// 数据名称
+  name String @db.VarChar(255)
+  /// 来源类型
+  type ImportTaskType
+  /// 数据大小（字节）
+  sizeBytes Int? @map("size_bytes")
+  /// 提交人
+  submitterId String @map("submitter_id") @db.VarChar(32)
+  /// 审核状态
+  status ImportStatus @default(PENDING)
+  /// 数据预览（前 5 行表头+数据），JSON
+  preview Json?
+  /// 退回原因（退回必填）
+  rejectReason String? @map("reject_reason") @db.VarChar(512)
+  /// 审核人
+  reviewedBy String? @map("reviewed_by") @db.VarChar(32)
+  /// 审核时间
+  reviewedAt DateTime? @map("reviewed_at")
+  /// 提交时间
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([status, createdAt])
+  @@map("import_tasks")
+}
+
+/// 公告接收范围（A-09）
+enum NoticeScope {
+  /// 全部用户
+  ALL
+  /// 指定角色
+  ROLE
+  /// 指定组织
+  ORG
+}
+
+/// 公告状态（A-09）
+enum NoticeStatus {
+  /// 草稿
+  DRAFT
+  /// 已发布
+  PUBLISHED
+  /// 已撤回
+  WITHDRAWN
+}
+
+/// 公告（A-09）
+model Notice {
+  /// 主键
+  id String @id @default(cuid()) @db.VarChar(32)
+  /// 标题
+  title String @db.VarChar(255)
+  /// 正文（富文本）
+  content String
+  /// 接收范围
+  scope NoticeScope @default(ALL)
+  /// 范围值（角色编码 / 租户 ID）
+  scopeValue String? @map("scope_value") @db.VarChar(64)
+  /// 状态
+  status NoticeStatus @default(DRAFT)
+  /// 发布时间
+  publishedAt DateTime? @map("published_at")
+  /// 创建人
+  createdBy String? @map("created_by") @db.VarChar(32)
+  /// 创建时间
+  createdAt DateTime @default(now()) @map("created_at")
+  /// 更新时间
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([status, createdAt])
+  @@map("notices")
+}
+
+/// 站内信类型（A-09 业务通知复用消息通道）
+enum MessageType {
+  /// 数据接入审核结果
+  IMPORT
+  /// 知识入库审核结果
+  KB
+  /// 会员续费提醒
+  RENEWAL
+  /// 系统通知
+  SYSTEM
+}
+
+/// 站内信（业务通知：审核结果 / 续费提醒）
+model Message {
+  /// 主键
+  id String @id @default(cuid()) @db.VarChar(32)
+  /// 接收用户
+  userId String @map("user_id") @db.VarChar(32)
+  /// 标题
+  title String @db.VarChar(255)
+  /// 内容
+  content String
+  /// 类型
+  type MessageType
+  /// 是否已读
+  read Boolean @default(false)
+  /// 创建时间
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([userId, createdAt])
+  @@index([type, userId])
+  @@map("messages")
+}
+
+/// 搜索词统计（A-10：热门词 / 无结果词 / 运营动作标记）
+model SearchTerm {
+  /// 主键
+  id String @id @default(cuid()) @db.VarChar(32)
+  /// 搜索词（唯一）
+  term String @unique @db.VarChar(255)
+  /// 检索总频次
+  totalCount Int @default(0) @map("total_count")
+  /// 无结果频次（返回结果数为 0）
+  emptyCount Int @default(0) @map("empty_count")
+  /// 最近检索时间
+  lastSearchedAt DateTime? @map("last_searched_at")
+  /// 是否设为快捷检索
+  isQuick Boolean @default(false) @map("is_quick")
+  /// 是否加入搜索建议
+  isSuggest Boolean @default(false) @map("is_suggest")
+  /// 创建时间
+  createdAt DateTime @default(now()) @map("created_at")
+  /// 更新时间
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([totalCount])
+  @@index([emptyCount])
+  @@map("search_terms")
+}
+
+/// 敏感词（A-10；命中即拦截该次检索并记审计）
+model SensitiveWord {
+  /// 主键
+  id String @id @default(cuid()) @db.VarChar(32)
+  /// 敏感词（唯一）
+  word String @unique @db.VarChar(128)
+  /// 类型（POLITICS / ILLEGAL / OTHER）
+  type String @db.VarChar(32)
+  /// 命中次数
+  hitCount Int @default(0) @map("hit_count")
+  /// 是否启用
+  enabled Boolean @default(true)
+  /// 创建时间
+  createdAt DateTime @default(now()) @map("created_at")
+  /// 更新时间
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([enabled])
+  @@map("sensitive_words")
+}
+
+/// 任务类型（A-11 / A-15 / A-19 共用任务中心）
+enum SysTaskType {
+  /// 检索
+  SEARCH
+  /// 采集
+  COLLECT
+  /// 分析
+  ANALYZE
+  /// 报告
+  REPORT
+  /// 向量索引
+  INDEX
+  /// 备份
+  BACKUP
+}
+
+/// 任务状态（A-11）
+enum SysTaskStatus {
+  /// 待执行
+  WAITING
+  /// 执行中
+  RUNNING
+  /// 成功
+  SUCCESS
+  /// 失败
+  FAILED
+  /// 已终止
+  STOPPED
+}
+
+/// 后台任务（A-11 任务中心；A-15 备份任务与 A-19 索引任务亦落此表）
+model SysTask {
+  /// 主键
+  id String @id @default(cuid()) @db.VarChar(32)
+  /// 任务编号（对外展示，唯一）
+  taskNo String @unique @map("task_no") @db.VarChar(64)
+  /// 任务类型
+  type SysTaskType
+  /// 关联用户（系统任务为空）
+  userId String? @map("user_id") @db.VarChar(32)
+  /// 状态
+  status SysTaskStatus @default(WAITING)
+  /// 进度百分比（0-100）
+  progress Int @default(0)
+  /// 当前阶段描述
+  stage String? @db.VarChar(64)
+  /// 错误摘要（详情见 task_logs）
+  errorLog String? @map("error_log")
+  /// 任务参数，JSON
+  payload Json?
+  /// 重试次数（上限 3）
+  retryCount Int @default(0) @map("retry_count")
+  /// 创建时间
+  createdAt DateTime @default(now()) @map("created_at")
+  /// 更新时间
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  logs TaskLog[]
+
+  @@index([type, status, createdAt])
+  @@map("sys_tasks")
+}
+
+/// 任务日志（A-11 错误日志面板）
+model TaskLog {
+  /// 主键
+  id String @id @default(cuid()) @db.VarChar(32)
+  /// 所属任务
+  taskId String @map("task_id") @db.VarChar(32)
+  /// 级别（INFO / WARN / ERROR）
+  level String @db.VarChar(16)
+  /// 日志内容
+  message String
+  /// 创建时间
+  createdAt DateTime @default(now()) @map("created_at")
+
+  task SysTask @relation(fields: [taskId], references: [id], onDelete: Cascade)
+
+  @@index([taskId, createdAt])
+  @@map("task_logs")
+}
+
+/// 备份范围（A-15）
+enum BackupScope {
+  /// 全量（数据+配置）
+  FULL
+  /// 仅业务数据
+  DATA
+  /// 仅配置
+  CONFIG
+}
+
+/// 备份记录（A-15；演示环境仅落记录，不执行真实备份）
+model BackupRecord {
+  /// 主键
+  id String @id @default(cuid()) @db.VarChar(32)
+  /// 备份范围
+  scope BackupScope @default(FULL)
+  /// 大小（字节；未真实执行时为空）
+  sizeBytes Int? @map("size_bytes")
+  /// 状态（SUCCESS / FAILED）
+  status String @default("SUCCESS") @db.VarChar(16)
+  /// 失败原因等备注
+  message String? @db.VarChar(512)
+  /// 操作人
+  operatorId String? @map("operator_id") @db.VarChar(32)
+  /// 创建时间
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([createdAt])
+  @@map("backup_records")
+}
+
+/// 知识分类（A-17，上限 3 级）
+model KbCategory {
+  /// 主键
+  id String @id @default(cuid()) @db.VarChar(32)
+  /// 上级分类（一级为空）
+  parentId String? @map("parent_id") @db.VarChar(32)
+  /// 分类名称
+  name String @db.VarChar(128)
+  /// 层级（1-3）
+  level Int @default(1)
+  /// 排序
+  sort Int @default(0)
+  /// 是否启用
+  enabled Boolean @default(true)
+
+  parent   KbCategory?  @relation("KbCategoryTree", fields: [parentId], references: [id], onDelete: Cascade)
+  children KbCategory[] @relation("KbCategoryTree")
+
+  @@index([parentId])
+  @@map("kb_categories")
+}
+
+/// 知识标签（A-17）
+model KbTag {
+  /// 主键
+  id String @id @default(cuid()) @db.VarChar(32)
+  /// 标签名（唯一）
+  name String @unique @db.VarChar(64)
+  /// 使用条目数
+  useCount Int @default(0) @map("use_count")
+  /// 是否启用
+  enabled Boolean @default(true)
+  /// 创建时间
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@map("kb_tags")
+}
+
+/// 支付渠道配置（A-20；密钥 AES-256-GCM 加密存储，只写不读明文）
+model PayChannelConfig {
+  /// 主键
+  id String @id @default(cuid()) @db.VarChar(32)
+  /// 支付渠道（唯一）
+  channel PayChannel @unique
+  /// 商户号
+  merchantId String? @map("merchant_id") @db.VarChar(128)
+  /// 回调地址
+  notifyUrl String? @map("notify_url") @db.VarChar(255)
+  /// 加密后的密钥（Base64：iv.tag.ciphertext）
+  secretEnc String? @map("secret_enc") @db.VarChar(1024)
+  /// 是否启用
+  enabled Boolean @default(false)
+  /// 密钥最近更新时间
+  keyUpdatedAt DateTime? @map("key_updated_at")
+  /// 创建时间
+  createdAt DateTime @default(now()) @map("created_at")
+  /// 更新时间
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("pay_channel_configs")
 }

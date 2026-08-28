@@ -17,6 +17,11 @@ export const TENANT_MODELS = new Set<string>([
   'KbChunk',
   'WorkspaceReport',
   'WorkspaceDataset',
+  'MemberSubscription',
+  'MemberOrder',
+  'PaymentRecord',
+  'TrialQuota',
+  // 注意：MemberPlan 为平台级公共数据（全租户共享），不登记租户隔离
 ]);
 
 /** 需要注入 where.tenantId 的查询操作（含 extended where unique 的 update/delete） */

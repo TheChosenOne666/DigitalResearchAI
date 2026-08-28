@@ -1,12 +1,12 @@
-/* Element Plus 蓝色主题（对齐原型：主色 #2563EB / 白底卡片圆角 14px / 画布 #F8FAFC） */
+/* Element Plus 蓝色主题（管理端对齐原型：主色 #409eff / 深色侧栏 #2f4050 / 白底卡片圆角 14px / 画布 #F8FAFC） */
 :root {
-  --el-color-primary: #2563eb;
-  --el-color-primary-light-3: #6692f1;
-  --el-color-primary-light-5: #92b1f5;
-  --el-color-primary-light-7: #bdd0f9;
-  --el-color-primary-light-8: #d3e0fb;
-  --el-color-primary-light-9: #e9effd;
-  --el-color-primary-dark-2: #1e4fbc;
+  --el-color-primary: #409eff;
+  --el-color-primary-light-3: #79bbff;
+  --el-color-primary-light-5: #a0cfff;
+  --el-color-primary-light-7: #c6e2ff;
+  --el-color-primary-light-8: #d9ecff;
+  --el-color-primary-light-9: #ecf5ff;
+  --el-color-primary-dark-2: #337ecc;
   --el-border-radius-base: 8px;
   --el-card-border-radius: 14px;
   --el-font-family:

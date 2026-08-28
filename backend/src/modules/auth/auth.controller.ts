@@ -1,11 +1,14 @@
-import { Body, Controller, Post, Ip, HttpCode, Headers } from '@nestjs/common';
+import { Body, Controller, Post, Ip, HttpCode, Headers, NotFoundException } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import {
   SmsSendSchema,
   SmsLoginSchema,
   PasswordLoginSchema,
+  DevLoginSchema,
   SmsSend,
   SmsLogin,
   PasswordLogin,
+  DevLogin,
   LoginResult,
 } from '@app/shared';
 import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe';
@@ -33,6 +36,7 @@ export class AuthController {
   constructor(
     private readonly authService: AuthService,
     private readonly smsCodeService: SmsCodeService,
+    private readonly config: ConfigService,
   ) {}
 
   @Post('sms/send')
@@ -58,6 +62,19 @@ export class AuthController {
     @Body(new ZodValidationPipe(PasswordLoginSchema)) body: PasswordLogin,
   ): Promise<LoginResult> {
     return this.authService.passwordLogin(body.phone, body.password);
+  }
+
+  /**
+   * 开发期免验证码登录（绕过短信 60s 限流）。
+   * 仅 DEV_LOGIN_ENABLED=true 时开放；否则返回 404（隐藏接口存在，避免生产被探测）。
+   */
+  @Post('dev-login')
+  @HttpCode(200)
+  devLogin(@Body(new ZodValidationPipe(DevLoginSchema)) body: DevLogin): Promise<LoginResult> {
+    if (this.config.get<string>('DEV_LOGIN_ENABLED') !== 'true') {
+      throw new NotFoundException();
+    }
+    return this.authService.devLogin(body.phone);
   }
 
   @Post('logout')
