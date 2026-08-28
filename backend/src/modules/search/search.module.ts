@@ -36,6 +36,6 @@ import { SearchStoreService } from './persistence/search.store.service';
       inject: [VerticalWorldBankConnector, LocalConnector, WebAnySearchConnector],
     },
   ],
-  exports: [SearchService],
+  exports: [SearchService, GenerateService],
 })
 export class SearchModule {}

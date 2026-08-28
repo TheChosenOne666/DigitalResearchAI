@@ -3,6 +3,7 @@ import HomeView from '@/views/HomeView.vue';
 import LoginView from '@/views/LoginView.vue';
 import KnowledgeView from '@/views/KnowledgeView.vue';
 import WorkspaceView from '@/views/WorkspaceView.vue';
+import AnalyzeResultView from '@/views/AnalyzeResultView.vue';
 import { useSessionStore } from '@/stores/session';
 
 /** 路由元信息扩展：requiresAuth=true 表示该路由需登录 */
@@ -24,6 +25,13 @@ const router = createRouter({
     { path: '/knowledge', name: 'knowledge', component: KnowledgeView, meta: { requiresAuth: true } },
     // M4.1 数据工作台（受登录门禁保护）
     { path: '/workspace', name: 'workspace', component: WorkspaceView, meta: { requiresAuth: true } },
+    // M4.3 分析结果页（受登录门禁保护）
+    {
+      path: '/workspace/analyze/:id',
+      name: 'analyze-result',
+      component: AnalyzeResultView,
+      meta: { requiresAuth: true },
+    },
   ],
 });
 

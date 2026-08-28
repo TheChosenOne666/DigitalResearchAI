@@ -103,3 +103,36 @@ describe('GenerateService.stream', () => {
     expect(result.fullText).toContain('检索结果摘要');
   });
 });
+
+describe('GenerateService.streamCustom', () => {
+  it('无 ARK_API_KEY 时降级输出 fallbackText', async () => {
+    const svc = new GenerateService(cfg({}));
+    const chunks: any[] = [];
+    const result = await svc.streamCustom(
+      { system: 'sys', prompt: 'p', fallbackText: '降级正文' },
+      new AbortController().signal,
+      (c) => chunks.push(c),
+    );
+    expect(result.fullText).toBe('降级正文');
+    expect(result.tokenUsage).toBe(0);
+    expect(chunks).toEqual([{ text: '降级正文', citations: [] }]);
+  });
+
+  it('LLM 路径：使用传入的 system/prompt 并累计全文', async () => {
+    (streamText as any).mockResolvedValue({
+      textStream: (async function* () {
+        yield '章节';
+      })(),
+      usage: Promise.resolve({ totalTokens: 7 }),
+    });
+    const svc = new GenerateService(cfg({ ARK_API_KEY: 'x' }));
+    const result = await svc.streamCustom(
+      { system: 'SYSTEM', prompt: 'PROMPT', fallbackText: 'fb' },
+      new AbortController().signal,
+      () => {},
+    );
+    expect(result.fullText).toBe('章节');
+    expect(result.tokenUsage).toBe(7);
+    expect(streamText).toHaveBeenCalledWith(expect.objectContaining({ system: 'SYSTEM', prompt: 'PROMPT' }));
+  });
+});

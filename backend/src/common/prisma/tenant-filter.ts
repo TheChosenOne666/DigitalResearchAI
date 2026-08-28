@@ -15,6 +15,7 @@ export const TENANT_MODELS = new Set<string>([
   'KbGroup',
   'KbDocument',
   'KbChunk',
+  'WorkspaceReport',
 ]);
 
 /** 需要注入 where.tenantId 的查询操作（含 extended where unique 的 update/delete） */

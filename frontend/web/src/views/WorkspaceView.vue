@@ -1,9 +1,17 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { useRouter } from 'vue-router';
 import { ElMessage } from 'element-plus';
 import * as echarts from 'echarts';
 import TopNav from '@/components/TopNav.vue';
-import { fetchDataset, uploadDataset, type DatasetResult, type DatasetSeries } from '@/api/workspace';
+import {
+  fetchDataset,
+  uploadDataset,
+  analyzeStream,
+  type DatasetResult,
+  type DatasetSeries,
+  type AnalyzeParams,
+} from '@/api/workspace';
 
 // ===== 指标/国家字典（对齐后端 vertical.connector 的 COUNTRY_ISO3 / INDICATOR_WDI 中文名） =====
 
@@ -249,6 +257,85 @@ function downloadCsv(): void {
 /** M4.3–M4.4 占位功能 */
 function comingSoon(name: string): void {
   ElMessage.info(`「${name}」将在后续批次开放`);
+}
+
+// ===== 生成分析结果（M4.3）=====
+
+const router = useRouter();
+
+const genVisible = ref(false);
+const genText = ref('');
+const genChars = ref(0);
+const genPct = ref(0);
+let analyzeAbort: AbortController | null = null;
+
+/** 组装当前工作台状态为分析入参并触发 SSE 流式生成，完成后跳转分析结果页 */
+async function generateAnalysis(): Promise<void> {
+  if (!series.value.length) {
+    ElMessage.warning('请先选择国家/地区并加载数据');
+    return;
+  }
+  const ind = curIndicator.value;
+  if (!ind) return;
+
+  const lastYear = years.value.length ? Number(years.value[years.value.length - 1]) : yearTo.value;
+  const params: AnalyzeParams = {
+    indicator: { name: ind.name, unit: ind.unit, note: ind.note },
+    countries: selectedCountries.value,
+    years: years.value,
+    series: series.value.map((s) => ({ country: s.country, values: s.values })),
+    sources: [],
+    chartConfig: {
+      type: chartType.value,
+      from: chartFrom.value,
+      to: lastYear,
+      label: chartLbl.value,
+      grid: chartGrid.value,
+    },
+  };
+
+  genVisible.value = true;
+  genText.value = '正在解析数据与统计口径…';
+  genChars.value = 0;
+  genPct.value = 20;
+  analyzeAbort = new AbortController();
+
+  try {
+    const result = await analyzeStream(
+      params,
+      {
+        onStage: (s) => {
+          if (s.stage === 'analyzing') {
+            genText.value = '正在解析数据与统计口径…';
+            genPct.value = 40;
+          } else if (s.stage === 'done') {
+            genText.value = '分析完成，正在保存报告…';
+            genPct.value = 100;
+          }
+        },
+        onReportChunk: (c) => {
+          genChars.value += c.text.length;
+          genText.value = '正在撰写 14 章节分析报告…';
+          genPct.value = Math.min(90, 40 + Math.round(genChars.value / 60));
+        },
+        onError: (e) => {
+          ElMessage.error(e.message || '生成失败');
+        },
+      },
+      analyzeAbort.signal,
+    );
+    if (result?.reportId) {
+      genVisible.value = false;
+      router.push(`/workspace/analyze/${result.reportId}`);
+    }
+  } catch (e) {
+    if ((e as Error).name !== 'AbortError') {
+      ElMessage.error(e instanceof Error ? e.message : '生成失败');
+    }
+  } finally {
+    genVisible.value = false;
+    analyzeAbort = null;
+  }
 }
 
 // ===== 上传补充（M4.2）=====
@@ -515,6 +602,7 @@ watch(indicator, scheduleLoad);
 onBeforeUnmount(() => {
   chart?.dispose();
   chart = undefined;
+  analyzeAbort?.abort();
 });
 </script>
 
@@ -658,7 +746,7 @@ onBeforeUnmount(() => {
             <svg class="ic" viewBox="0 0 24 24" fill="none"><path d="M4 19V9m6 10V5m6 14v-7m4 7V3" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" /></svg>
             生成数据图表
           </span>
-          <span class="op primary" @click="comingSoon('生成分析结果')">
+          <span class="op primary" @click="generateAnalysis">
             <svg class="ic" viewBox="0 0 24 24" fill="none"><path d="M12 3l1.6 4.4L18 9l-4.4 1.6L12 15l-1.6-4.4L6 9l4.4-1.6L12 3z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" /></svg>
             生成分析结果
           </span>
@@ -792,10 +880,50 @@ onBeforeUnmount(() => {
         <el-button type="primary" :loading="uploading" @click="commitUpload">完成</el-button>
       </template>
     </el-dialog>
+
+    <!-- 生成分析结果进度弹窗 -->
+    <el-dialog v-model="genVisible" title="生成分析结果" width="420px" :close-on-click-modal="false" :show-close="false">
+      <div class="gen-progress">
+        <div class="gen-ic">
+          <svg viewBox="0 0 24 24" fill="none"><path d="M12 3l1.6 4.4L18 9l-4.4 1.6L12 15l-1.6-4.4L6 9l4.4-1.6L12 3z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" /></svg>
+        </div>
+        <div class="gen-text">{{ genText }}</div>
+        <div class="gen-sub" v-if="genChars > 0">已生成 {{ genChars }} 字</div>
+        <el-progress :percentage="genPct" :show-text="false" :stroke-width="8" style="margin-top: 16px" />
+      </div>
+    </el-dialog>
   </div>
 </template>
 
 <style scoped>
+.gen-progress {
+  text-align: center;
+  padding: 8px 4px 4px;
+}
+.gen-ic {
+  width: 52px;
+  height: 52px;
+  margin: 0 auto 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 14px;
+  background: #eff4ff;
+  color: #2563eb;
+}
+.gen-ic svg {
+  width: 28px;
+  height: 28px;
+}
+.gen-text {
+  font-size: 13px;
+  color: #334155;
+}
+.gen-sub {
+  margin-top: 6px;
+  font-size: 12px;
+  color: #94a3b8;
+}
 .ws-page {
   min-height: 100vh;
   display: flex;

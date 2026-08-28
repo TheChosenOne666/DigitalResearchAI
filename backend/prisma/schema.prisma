@@ -387,3 +387,36 @@ model SearchUsage {
   @@id([tenantId, userId, day])
   @@map("search_usage")
 }
+
+// ===== M4 工作台域（分析结果报告） =====
+
+/// 工作台分析结果报告（区别于智搜 SearchReport：含图表配置/分析背景/指标口径）
+model WorkspaceReport {
+  /// 主键
+  id             String   @id @default(cuid()) @db.VarChar(32)
+  /// 归属租户（行级隔离）
+  tenantId       String   @map("tenant_id") @db.VarChar(32)
+  /// 创建人
+  userId         String   @map("user_id") @db.VarChar(32)
+  /// 报告标题（{指标} 数据分析报告）
+  title          String   @db.VarChar(255)
+  /// 报告正文（Markdown，14 章节 ≥3000 字）
+  contentMd      String   @map("content_md")
+  /// 参数快照（指标/国家/年份/来源/图表配置/统计/数据表），JSON
+  paramsSnapshot Json?    @map("params_snapshot")
+  /// 来源列表（编号/标题/链接/类型），JSON
+  sources        Json?
+  /// token 用量
+  tokenUsage     Int      @default(0) @map("token_usage")
+  /// 报告状态（DRAFT/ARCHIVED）
+  status         String   @default("DRAFT") @db.VarChar(16)
+  /// 版本号（重新生成累加）
+  version        Int      @default(1)
+  /// 创建时间
+  createdAt      DateTime @default(now()) @map("created_at")
+  /// 更新时间
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  @@index([tenantId, createdAt])
+  @@map("workspace_reports")
+}

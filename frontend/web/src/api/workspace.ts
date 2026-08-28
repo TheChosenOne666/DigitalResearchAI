@@ -54,3 +54,178 @@ export function uploadDataset(file: File): Promise<UploadedDataset> {
   fd.append('file', file);
   return request('/api/v1/workspace/upload', { method: 'POST', body: fd });
 }
+
+// ===== M4.3 分析结果 =====
+
+/** 来源项 */
+export interface AnalyzeSource {
+  name: string;
+  url?: string;
+  desc?: string;
+  type: string;
+}
+
+/** 图表配置快照 */
+export interface AnalyzeChartConfig {
+  type?: string;
+  from?: number;
+  to?: number;
+  label?: boolean;
+  grid?: boolean;
+}
+
+/** 分析入参（工作台把合并后的时序数据 + 来源 + 图表配置一并传入） */
+export interface AnalyzeParams {
+  indicator: { name: string; unit: string; note?: string; code?: string };
+  countries: string[];
+  years: string[];
+  series: Array<{ country: string; values: Record<string, number> }>;
+  sources: AnalyzeSource[];
+  chartConfig?: AnalyzeChartConfig;
+  question?: string;
+}
+
+/** 统计卡片 */
+export interface AnalyzeStats {
+  sampleCount: number;
+  yearRange: string;
+  yearCount: number;
+  endAvg: number | null;
+  changePct: number | null;
+  completeness: number;
+  nonNull: number;
+  totalCells: number;
+}
+
+/** 分析报告详情（含 paramsSnapshot 内的统计与数据表） */
+export interface AnalyzeReportDetail {
+  id: string;
+  title: string;
+  contentMd: string;
+  paramsSnapshot: {
+    indicator?: { name: string; unit: string; note?: string; code?: string };
+    countries?: string[];
+    years?: string[];
+    series?: Array<{ country: string; values: Record<string, number> }>;
+    chartConfig?: AnalyzeChartConfig | null;
+    question?: string | null;
+    stats?: AnalyzeStats;
+    table?: { head: string[]; rows: Array<Array<string | number>> };
+  } | null;
+  sources: AnalyzeSource[];
+  tokenUsage: number;
+  status: string;
+  version: number;
+  createdAt: string;
+}
+
+/** 分析 SSE 事件回调 */
+export interface AnalyzeStreamHandlers {
+  onStage?(s: { stage: string; msg?: string }): void;
+  onReportChunk?(c: { text: string; citations: number[] }): void;
+  onDone?(d: { reportId: string }): void;
+  onError?(e: { message: string }): void;
+}
+
+type AnalyzeEventName = 'stage' | 'report_chunk' | 'done' | 'error';
+
+/**
+ * 生成分析结果（M4.3）：POST 读流解析 SSE（stage → report_chunk → done{reportId}）。
+ * 返回 done 事件中的 reportId（供跳转分析结果页）。
+ */
+export function analyzeStream(
+  params: AnalyzeParams,
+  handlers: AnalyzeStreamHandlers,
+  signal?: AbortSignal,
+): Promise<{ reportId: string } | void> {
+  const sessionId = localStorage.getItem('web.sessionId');
+  const headers: Record<string, string> = {
+    Accept: 'text/event-stream',
+    'Content-Type': 'application/json',
+  };
+  if (sessionId) headers.Authorization = `Bearer ${sessionId}`;
+
+  return fetch('/api/v1/workspace/analyze', {
+    method: 'POST',
+    headers,
+    body: JSON.stringify(params),
+    signal,
+  }).then(async (res) => {
+    if (!res.ok || !res.body) {
+      const text = await res.text().catch(() => '');
+      handlers.onError?.({ message: text || `请求失败(${res.status})` });
+      return;
+    }
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder('utf-8');
+    let buffer = '';
+    let donePayload: { reportId: string } | null = null;
+
+    const parseFrames = (block: string): void => {
+      let event: AnalyzeEventName = 'stage';
+      const dataLines: string[] = [];
+      for (const rawLine of block.split('\n')) {
+        const line = rawLine.trimEnd();
+        if (!line) continue;
+        if (line.startsWith(':')) continue;
+        if (line.startsWith('event:')) {
+          event = line.slice(6).trim() as AnalyzeEventName;
+        } else if (line.startsWith('data:')) {
+          dataLines.push(line.slice(5).trimStart());
+        }
+      }
+      if (!dataLines.length) return;
+      let data: Record<string, unknown>;
+      try {
+        data = JSON.parse(dataLines.join('\n'));
+      } catch {
+        return;
+      }
+      switch (event) {
+        case 'stage':
+          handlers.onStage?.(data as { stage: string; msg?: string });
+          break;
+        case 'report_chunk':
+          handlers.onReportChunk?.(data as { text: string; citations: number[] });
+          break;
+        case 'done':
+          donePayload = data as { reportId: string };
+          handlers.onDone?.(donePayload);
+          break;
+        case 'error':
+          handlers.onError?.(data as { message: string });
+          break;
+      }
+    };
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      let sepIdx: number;
+      while ((sepIdx = buffer.indexOf('\n\n')) !== -1) {
+        const frame = buffer.slice(0, sepIdx);
+        buffer = buffer.slice(sepIdx + 2);
+        parseFrames(frame);
+      }
+    }
+    if (buffer.trim()) parseFrames(buffer);
+    return donePayload ?? undefined;
+  });
+}
+
+/** 分析报告详情 */
+export async function fetchAnalyzeReport(id: string): Promise<AnalyzeReportDetail> {
+  return request(`/api/v1/workspace/reports/${encodeURIComponent(id)}`);
+}
+
+/** 整份分析结果存入知识库（M4.3）：提交后 PENDING 待审核 */
+export async function saveAnalyzeToKb(
+  id: string,
+  body: { libraryId: string; groupId?: string | null; visibility?: string; tags?: string[] },
+): Promise<{ created: number; documents: Array<{ id: string; name: string }> }> {
+  return request(`/api/v1/workspace/reports/${encodeURIComponent(id)}/save-kb`, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  });
+}

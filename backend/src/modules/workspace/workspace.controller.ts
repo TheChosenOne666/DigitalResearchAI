@@ -1,25 +1,40 @@
 import {
+  Body,
   Controller,
   Get,
   HttpCode,
   HttpStatus,
+  Param,
   Post,
   Query,
   Req,
+  Res,
   UploadedFile,
   UseInterceptors,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
-import type { Request } from 'express';
+import type { Request, Response } from 'express';
 import { BizException } from '../../common/exceptions/biz.exception';
 import { ErrorCode } from '@app/shared';
 import { WorkspaceService } from './workspace.service';
+import { AnalyzeService } from './analyze.service';
+import { WorkspaceStoreService } from './workspace.store.service';
 import { detectMimeType } from '../kb/parse/doc-parser.service';
+import { serializeSse } from '../search/sse/sse.events';
+import type { AnalyzeInput } from './analyze';
 
 /** 上传文件最小形状（避免依赖 @types/multer） */
 interface UploadedFileShape {
   originalname: string;
   buffer: Buffer;
+}
+
+/** 分析结果存入知识库入参 */
+export interface AnalyzeSaveKbBody {
+  libraryId?: string;
+  groupId?: string | null;
+  visibility?: string;
+  tags?: unknown;
 }
 
 /** 逗号分隔列表解析（兼容 query 重复参数产生的数组；空串/缺省 → 空数组） */
@@ -38,13 +53,28 @@ function parseYear(raw: string | undefined, fallback: number): number {
   return Number.isInteger(n) && n > 0 ? n : fallback;
 }
 
+/** 分析输入基本校验（返回错误文案，通过返回 null） */
+function validateAnalyzeInput(body: AnalyzeInput | undefined): string | null {
+  if (!body || typeof body !== 'object') return '缺少分析参数';
+  if (!body.indicator || typeof body.indicator.name !== 'string' || !body.indicator.name.trim()) {
+    return '缺少指标信息';
+  }
+  if (!Array.isArray(body.years) || !body.years.length) return '缺少年份维度';
+  if (!Array.isArray(body.series) || !body.series.length) return '缺少时序数据，请先选择国家/地区';
+  return null;
+}
+
 /**
- * 数据工作台控制器（M4.1）：时序数据查询。
+ * 数据工作台控制器（M4）：时序数据查询 + 上传补充 + 分析结果生成/详情/存库。
  * 登录门禁由全局 SessionAuthGuard 保证；WDI 为公共数据，无需租户上下文。
  */
 @Controller('workspace')
 export class WorkspaceController {
-  constructor(private readonly workspace: WorkspaceService) {}
+  constructor(
+    private readonly workspace: WorkspaceService,
+    private readonly analyzeService: AnalyzeService,
+    private readonly store: WorkspaceStoreService,
+  ) {}
 
   @Get('dataset')
   @HttpCode(HttpStatus.OK)
@@ -87,5 +117,58 @@ export class WorkspaceController {
       );
     }
     return this.workspace.upload(mime, file.buffer);
+  }
+
+  /**
+   * 生成分析结果（M4.3）：SSE 流式，事件 stage → report_chunk → done{reportId}。
+   * 客户端断开 → AbortController 全链路取消（对齐 search/stream）。
+   */
+  @Post('analyze')
+  @HttpCode(HttpStatus.OK)
+  async analyze(
+    @Req() req: Request,
+    @Res() res: Response,
+    @Body() body: AnalyzeInput,
+  ): Promise<void> {
+    res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    res.flushHeaders?.();
+
+    const ac = new AbortController();
+    res.on('close', () => ac.abort());
+    const send = (event: Parameters<typeof serializeSse>[0], data: unknown) =>
+      res.write(serializeSse(event, data));
+
+    try {
+      const err = validateAnalyzeInput(body);
+      if (err) {
+        send('error', { message: err });
+        return;
+      }
+      send('stage', { stage: 'analyzing', msg: '正在解析数据与统计口径' });
+      const { reportId } = await this.analyzeService.analyze(body, ac.signal, (chunk) =>
+        send('report_chunk', chunk),
+      );
+      send('stage', { stage: 'done', msg: '分析完成' });
+      send('done', { reportId });
+    } catch (e) {
+      send('error', { message: e instanceof Error ? e.message : 'unknown error' });
+    } finally {
+      res.end();
+    }
+  }
+
+  @Get('reports/:id')
+  @HttpCode(HttpStatus.OK)
+  reportDetail(@Param('id') id: string): Promise<unknown> {
+    return this.store.reportDetail(id);
+  }
+
+  /** 整份分析结果存入知识库（M4.3）：报告正文作为一份 md 文档提交入库，待审核 */
+  @Post('reports/:id/save-kb')
+  @HttpCode(HttpStatus.CREATED)
+  saveToKb(@Param('id') id: string, @Body() body: AnalyzeSaveKbBody): Promise<unknown> {
+    return this.analyzeService.saveToKb(id, body ?? {});
   }
 }

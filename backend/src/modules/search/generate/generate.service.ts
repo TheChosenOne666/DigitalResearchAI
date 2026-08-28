@@ -101,15 +101,36 @@ export class GenerateService {
     signal: AbortSignal,
     onChunk: (chunk: GenerateChunk) => void,
   ): Promise<GenerateResult> {
+    return this.streamCustom(
+      {
+        system: GENERATE_SYSTEM,
+        prompt: buildGeneratePrompt(req.question, req.conditions, req.sources),
+        fallbackText: buildSearchFallback(req),
+      },
+      signal,
+      onChunk,
+    );
+  }
+
+  /**
+   * 通用流式生成（M4.3 分析结果页复用）：显式指定 system/prompt 与降级文本，
+   * 其余逻辑（LLM 调用、逐分片回调、无 Key/失败降级）与智搜一致。
+   * @param input system 提示词、user prompt、无 Key/失败时的降级正文
+   */
+  async streamCustom(
+    input: { system: string; prompt: string; fallbackText: string },
+    signal: AbortSignal,
+    onChunk: (chunk: GenerateChunk) => void,
+  ): Promise<GenerateResult> {
     if (!this.enabled) {
-      this.logger.warn('ARK_API_KEY 未配置，流式生成降级：输出检索结果摘要');
-      return this.fallback(req, onChunk);
+      this.logger.warn('ARK_API_KEY 未配置，流式生成降级：输出降级正文');
+      return this.fallback(input.fallbackText, onChunk);
     }
     try {
       const { textStream, usage } = await streamText({
         model: this.client,
-        system: GENERATE_SYSTEM,
-        prompt: buildGeneratePrompt(req.question, req.conditions, req.sources),
+        system: input.system,
+        prompt: input.prompt,
         abortSignal: signal,
       });
       let fullText = '';
@@ -124,18 +145,23 @@ export class GenerateService {
       return { fullText, tokenUsage: u?.totalTokens ?? 0, citations };
     } catch (e) {
       this.logger.warn(`流式生成失败，降级：${e instanceof Error ? e.message : e}`);
-      return this.fallback(req, onChunk);
+      return this.fallback(input.fallbackText, onChunk);
     }
   }
 
-  /** 无 Key/失败降级：输出结构化摘要，至少给前端可渲染内容 */
-  private fallback(req: GenerateRequest, onChunk: (c: GenerateChunk) => void): GenerateResult {
-    const items = req.sources.map(
-      (s, i) => `${i + 1}. ${s.title}${s.url && !s.url.startsWith('kb://') ? `（${s.url}）` : ''}`,
-    );
-    const text =
-      `## 检索结果摘要\n\n**问题**：${req.question}\n\n已检索到 ${req.sources.length} 条相关来源：\n\n${items.join('\n') || '（暂无可引用来源）'}\n`;
+  /** 无 Key/失败降级：输出降级正文，至少给前端可渲染内容 */
+  private fallback(text: string, onChunk: (c: GenerateChunk) => void): GenerateResult {
     onChunk({ text, citations: [] });
     return { fullText: text, tokenUsage: 0, citations: [] };
   }
+}
+
+/** 智搜降级正文（检索结果摘要），供 stream 无 Key/失败时输出 */
+export function buildSearchFallback(req: GenerateRequest): string {
+  const items = req.sources.map(
+    (s, i) => `${i + 1}. ${s.title}${s.url && !s.url.startsWith('kb://') ? `（${s.url}）` : ''}`,
+  );
+  return (
+    `## 检索结果摘要\n\n**问题**：${req.question}\n\n已检索到 ${req.sources.length} 条相关来源：\n\n${items.join('\n') || '（暂无可引用来源）'}\n`
+  );
 }
