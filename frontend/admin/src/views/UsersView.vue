@@ -18,12 +18,6 @@ const ROLE_OPTIONS = [
   { value: 'DATA_ADMIN', label: '数据管理员' },
   { value: 'USER', label: '普通用户' },
 ];
-const ROLE_LABEL: Record<string, string> = {
-  PLATFORM_ADMIN: '平台管理员',
-  DATA_ADMIN: '数据管理员',
-  USER: '普通用户',
-};
-
 const loading = ref(false);
 const list = ref<AdminUserRow[]>([]);
 const total = ref(0);
