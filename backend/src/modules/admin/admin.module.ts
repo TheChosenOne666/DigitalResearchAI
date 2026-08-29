@@ -32,6 +32,11 @@ import { AdminMonitorController } from './monitor.controller';
 import { AdminMonitorService } from './monitor.service';
 import { AdminBackupController } from './backup.controller';
 import { AdminBackupService } from './backup.service';
+import { AdminKbController } from './kb-admin.controller';
+import { AdminKbService } from './kb-admin.service';
+import { AdminPayController } from './pay-admin.controller';
+import { AdminPayService } from './pay-admin.service';
+import { KbModule } from '../kb/kb.module';
 
 /**
  * 管理端模块（M6）：平台级跨租户应用。
@@ -41,10 +46,10 @@ import { AdminBackupService } from './backup.service';
  *   M6.2 装配组织用户（A-02 用户管理 / A-03 会员管理 / A-04 角色权限）；
  *   M6.3 装配数据资源/数据治理/运营管理（A-05~A-10）；
  *   M6.4 装配任务中心（A-11）与系统管理（A-12 参数配置 / A-13 审计日志 / A-14 运行监控 / A-15 数据备份）；
- *   M6.5 在 providers/controllers 中追加对应控制器与服务。
+ *   M6.5 装配知识库管理（A-16~A-19，学习链路复用 KbModule 的 KbLearningService）与支付中心（A-20）。
  */
 @Module({
-  imports: [PrismaModule, HealthModule],
+  imports: [PrismaModule, HealthModule, KbModule],
   controllers: [
     MeController,
     DashboardController,
@@ -62,6 +67,8 @@ import { AdminBackupService } from './backup.service';
     AdminAuditController,
     AdminMonitorController,
     AdminBackupController,
+    AdminKbController,
+    AdminPayController,
   ],
   providers: [
     DashboardService,
@@ -79,6 +86,8 @@ import { AdminBackupService } from './backup.service';
     AdminConfigsService,
     AdminMonitorService,
     AdminBackupService,
+    AdminKbService,
+    AdminPayService,
   ],
   exports: [AdminAuditService],
 })

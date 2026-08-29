@@ -781,3 +781,276 @@ export function fetchBackupRecords(page: number, pageSize: number): Promise<Admi
 export function restoreBackup(id: string): Promise<{ ok: boolean; id: string }> {
   return request<{ ok: boolean; id: string }>(`/api/v1/admin/backup/records/${id}/restore`, { method: 'POST' });
 }
+
+/* ===== M6.5 知识库管理（A-16~A-19） ===== */
+
+/** 校验项（重复性/完整性/合规性/格式） */
+export interface KbReviewCheck {
+  status: 'PASS' | 'WARN' | 'FAIL';
+  note: string;
+}
+
+/** 入库审核行（A-16） */
+export interface KbReviewRow {
+  id: string;
+  tenantId: string;
+  tenantName: string | null;
+  libraryId: string;
+  libraryName: string | null;
+  groupId: string | null;
+  groupName: string | null;
+  name: string;
+  mimeType: string;
+  size: number;
+  visibility: string;
+  tags: string[];
+  sourceSessionId: string | null;
+  sourceType: string;
+  submitter: string | null;
+  createdAt: string;
+  checks: { duplicate: KbReviewCheck; complete: KbReviewCheck; compliance: KbReviewCheck; format: KbReviewCheck };
+}
+
+/** 来源溯源（A-16） */
+export interface KbTrace {
+  id: string;
+  name: string;
+  status: string;
+  sourceType: string;
+  tenantName: string | null;
+  libraryName: string | null;
+  groupName: string | null;
+  sourceQuestion: string | null;
+  sourceLink: string | null;
+  submitter: { id: string; name: string } | null;
+  tags: string[];
+  createdAt: string;
+}
+
+/** 入库审核队列（A-16） */
+export function fetchKbReviews(query: { keyword?: string; page: number; pageSize: number }): Promise<AdminPage<KbReviewRow>> {
+  const qs = new URLSearchParams();
+  if (query.keyword) qs.set('keyword', query.keyword);
+  qs.set('page', String(query.page));
+  qs.set('pageSize', String(query.pageSize));
+  return request<AdminPage<KbReviewRow>>(`/api/v1/admin/kb/reviews?${qs.toString()}`);
+}
+
+/** 审核通过（A-16，触发学习） */
+export function approveKbReview(id: string): Promise<{ id: string; status: string }> {
+  return request<{ id: string; status: string }>(`/api/v1/admin/kb/reviews/${id}/approve`, { method: 'POST' });
+}
+
+/** 审核驳回（A-16，原因必填） */
+export function rejectKbReview(id: string, reason: string): Promise<{ id: string; rejected: boolean }> {
+  return request<{ id: string; rejected: boolean }>(`/api/v1/admin/kb/reviews/${id}/reject`, { method: 'POST', body: JSON.stringify({ reason }) });
+}
+
+/** 来源溯源（A-16） */
+export function fetchKbTrace(id: string): Promise<KbTrace> {
+  return request<KbTrace>(`/api/v1/admin/kb/reviews/${id}/trace`);
+}
+
+/** 知识分类（A-17） */
+export interface KbCategoryRow {
+  id: string;
+  parentId: string | null;
+  name: string;
+  level: number;
+  sort: number;
+  enabled: boolean;
+}
+
+/** 知识标签（A-17） */
+export interface KbTagRow {
+  id: string;
+  name: string;
+  useCount: number;
+  enabled: boolean;
+  createdAt: string;
+}
+
+/** 分类列表（A-17） */
+export function fetchKbCategories(): Promise<KbCategoryRow[]> {
+  return request<KbCategoryRow[]>('/api/v1/admin/kb/categories');
+}
+
+/** 新增分类（A-17） */
+export function createKbCategory(body: { name: string; parentId?: string; sort?: number }): Promise<KbCategoryRow> {
+  return request<KbCategoryRow>('/api/v1/admin/kb/categories', { method: 'POST', body: JSON.stringify(body) });
+}
+
+/** 编辑分类（A-17） */
+export function updateKbCategory(id: string, body: { name?: string; sort?: number }): Promise<KbCategoryRow> {
+  return request<KbCategoryRow>(`/api/v1/admin/kb/categories/${id}`, { method: 'PUT', body: JSON.stringify(body) });
+}
+
+/** 分类启停（A-17） */
+export function setKbCategoryEnabled(id: string, enabled: boolean): Promise<{ id: string; enabled: boolean }> {
+  return request<{ id: string; enabled: boolean }>(`/api/v1/admin/kb/categories/${id}/enabled`, { method: 'PATCH', body: JSON.stringify({ enabled }) });
+}
+
+/** 标签列表（A-17） */
+export function fetchKbTags(): Promise<KbTagRow[]> {
+  return request<KbTagRow[]>('/api/v1/admin/kb/tags');
+}
+
+/** 新增标签（A-17） */
+export function createKbTag(name: string): Promise<KbTagRow> {
+  return request<KbTagRow>('/api/v1/admin/kb/tags', { method: 'POST', body: JSON.stringify({ name }) });
+}
+
+/** 编辑标签（A-17） */
+export function updateKbTag(id: string, body: { name?: string }): Promise<KbTagRow> {
+  return request<KbTagRow>(`/api/v1/admin/kb/tags/${id}`, { method: 'PUT', body: JSON.stringify(body) });
+}
+
+/** 标签启停（A-17） */
+export function setKbTagEnabled(id: string, enabled: boolean): Promise<{ id: string; enabled: boolean }> {
+  return request<{ id: string; enabled: boolean }>(`/api/v1/admin/kb/tags/${id}/enabled`, { method: 'PATCH', body: JSON.stringify({ enabled }) });
+}
+
+/** 权限规则（A-18） */
+export interface KbPermissionRule {
+  defaultVisibility: string;
+  privateScope: string;
+}
+
+/** 权限规则读取（A-18） */
+export function fetchKbPermissionRule(): Promise<KbPermissionRule> {
+  return request<KbPermissionRule>('/api/v1/admin/kb/permission/rule');
+}
+
+/** 权限规则保存（A-18） */
+export function updateKbPermissionRule(body: Partial<KbPermissionRule>): Promise<KbPermissionRule> {
+  return request<KbPermissionRule>('/api/v1/admin/kb/permission/rule', { method: 'PUT', body: JSON.stringify(body) });
+}
+
+/** 条目权限行（A-18） */
+export interface KbPermissionItemRow {
+  id: string;
+  name: string;
+  tenantName: string | null;
+  libraryName: string | null;
+  visibility: 'PUBLIC' | 'PRIVATE';
+  updatedAt: string;
+}
+
+/** 条目权限列表（A-18） */
+export function fetchKbPermissionItems(query: { keyword?: string; visibility?: string; page: number; pageSize: number }): Promise<AdminPage<KbPermissionItemRow>> {
+  const qs = new URLSearchParams();
+  if (query.keyword) qs.set('keyword', query.keyword);
+  if (query.visibility) qs.set('visibility', query.visibility);
+  qs.set('page', String(query.page));
+  qs.set('pageSize', String(query.pageSize));
+  return request<AdminPage<KbPermissionItemRow>>(`/api/v1/admin/kb/permission/items?${qs.toString()}`);
+}
+
+/** 条目公开⇄私有切换（A-18，前端二次确认） */
+export function setKbItemVisibility(id: string, visibility: 'PUBLIC' | 'PRIVATE'): Promise<{ id: string; visibility: string }> {
+  return request<{ id: string; visibility: string }>(`/api/v1/admin/kb/permission/items/${id}`, { method: 'PATCH', body: JSON.stringify({ visibility }) });
+}
+
+/** 索引统计（A-19） */
+export interface KbIndexStats {
+  totalDocs: number;
+  totalChunks: number;
+  pendingChunks: number;
+  lastRebuildAt: string | null;
+  recentTasks: Array<{
+    id: string;
+    taskNo: string;
+    action: 'REBUILD' | 'INCREMENT' | 'CLEAN' | null;
+    status: string;
+    progress: number;
+    createdAt: string;
+    updatedAt: string;
+  }>;
+}
+
+/** 索引统计（A-19） */
+export function fetchKbIndexStats(): Promise<KbIndexStats> {
+  return request<KbIndexStats>('/api/v1/admin/kb/index/stats');
+}
+
+/** 发起索引重建（A-19，演示环境仅落任务记录） */
+export function rebuildKbIndex(): Promise<{ id: string; taskNo: string; action: string; status: string }> {
+  return request<{ id: string; taskNo: string; action: string; status: string }>('/api/v1/admin/kb/index/rebuild', { method: 'POST' });
+}
+
+/** 发起增量更新（A-19，strategy: AUTO_DAILY=自动+每日校验 / DAILY_ONLY=仅每日校验） */
+export function incrementKbIndex(strategy?: string): Promise<{ id: string; taskNo: string; action: string; status: string }> {
+  return request<{ id: string; taskNo: string; action: string; status: string }>('/api/v1/admin/kb/index/increment', { method: 'POST', body: JSON.stringify({ strategy }) });
+}
+
+/** 发起脏数据清理（A-19，演示环境仅落任务记录） */
+export function cleanKbIndex(): Promise<{ id: string; taskNo: string; action: string; status: string }> {
+  return request<{ id: string; taskNo: string; action: string; status: string }>('/api/v1/admin/kb/index/clean', { method: 'POST' });
+}
+
+/* ===== M6.5 支付中心（A-20） ===== */
+
+/** 订单行（A-20，跨租户） */
+export interface PayOrderRow {
+  id: string;
+  orderNo: string;
+  tenantId: string;
+  userId: string;
+  user: string | null;
+  planName: string;
+  cycleName: string;
+  amountCents: number;
+  channel: string;
+  status: string;
+  isRenewal: boolean;
+  paidAt: string | null;
+  expireAt: string | null;
+  createdAt: string;
+}
+
+/** 订单列表（A-20） */
+export function fetchPayOrders(query: { status?: string; channel?: string; keyword?: string; page: number; pageSize: number }): Promise<AdminPage<PayOrderRow>> {
+  const qs = new URLSearchParams();
+  if (query.status) qs.set('status', query.status);
+  if (query.channel) qs.set('channel', query.channel);
+  if (query.keyword) qs.set('keyword', query.keyword);
+  qs.set('page', String(query.page));
+  qs.set('pageSize', String(query.pageSize));
+  return request<AdminPage<PayOrderRow>>(`/api/v1/admin/pay/orders?${qs.toString()}`);
+}
+
+/** 退款（A-20，原因必填；订单 → 已退款 + REFUND 流水） */
+export function refundPayOrder(orderNo: string, reason: string): Promise<{ id: string; orderNo: string; status: string; transactionNo: string }> {
+  return request<{ id: string; orderNo: string; status: string; transactionNo: string }>(`/api/v1/admin/pay/orders/${orderNo}/refund`, { method: 'POST', body: JSON.stringify({ reason }) });
+}
+
+/** 关闭异常/超时订单（A-20） */
+export function closePayOrder(orderNo: string): Promise<{ id: string; orderNo: string; status: string }> {
+  return request<{ id: string; orderNo: string; status: string }>(`/api/v1/admin/pay/orders/${orderNo}/close`, { method: 'POST' });
+}
+
+/** 渠道配置行（A-20，密钥只回状态） */
+export interface PayChannelRow {
+  id: string;
+  channel: string;
+  merchantId: string | null;
+  notifyUrl: string | null;
+  enabled: boolean;
+  hasKey: boolean;
+  keyUpdatedAt: string | null;
+}
+
+/** 渠道列表（A-20） */
+export function fetchPayChannels(): Promise<PayChannelRow[]> {
+  return request<PayChannelRow[]>('/api/v1/admin/pay/channels');
+}
+
+/** 编辑渠道（A-20） */
+export function updatePayChannel(id: string, body: { merchantId?: string | null; notifyUrl?: string | null; enabled?: boolean }): Promise<{ id: string; channel: string; enabled: boolean }> {
+  return request<{ id: string; channel: string; enabled: boolean }>(`/api/v1/admin/pay/channels/${id}`, { method: 'PUT', body: JSON.stringify(body) });
+}
+
+/** 更新/轮换渠道密钥（A-20，加密存储不回明文） */
+export function updatePayChannelKey(id: string, secret: string): Promise<{ id: string; channel: string; hasKey: boolean; keyUpdatedAt: string }> {
+  return request<{ id: string; channel: string; hasKey: boolean; keyUpdatedAt: string }>(`/api/v1/admin/pay/channels/${id}/key`, { method: 'POST', body: JSON.stringify({ secret }) });
+}

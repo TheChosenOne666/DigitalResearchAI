@@ -222,3 +222,86 @@ export type AdminTermFlags = z.infer<typeof AdminTermFlagsSchema>;
 export type AdminSensitiveCreate = z.infer<typeof AdminSensitiveCreateSchema>;
 export type AdminSensitiveUpdate = z.infer<typeof AdminSensitiveUpdateSchema>;
 export type AdminSensitiveEnabled = z.infer<typeof AdminSensitiveEnabledSchema>;
+
+/* ===== M6.5 知识库管理 / 支付中心 ===== */
+
+/** 审核驳回（A-16，原因必填） */
+export const AdminKbRejectSchema = z.object({
+  reason: z.string().min(2, '驳回原因至少 2 位').max(200, '驳回原因最多 200 位'),
+});
+
+/** 新增分类（A-17，层级上限 3 级在服务层校验） */
+export const AdminKbCategoryCreateSchema = z.object({
+  name: z.string().min(1, '分类名不能为空').max(64, '分类名最多 64 位'),
+  parentId: z.string().min(1).optional(),
+  sort: z.number().int('排序必须为整数').min(0).max(999).optional(),
+});
+
+/** 编辑分类（A-17，不可移动层级） */
+export const AdminKbCategoryUpdateSchema = z.object({
+  name: z.string().min(1, '分类名不能为空').max(64, '分类名最多 64 位').optional(),
+  sort: z.number().int('排序必须为整数').min(0).max(999).optional(),
+});
+
+/** 分类/标签启用停用（A-17） */
+export const AdminKbEnabledSchema = z.object({
+  enabled: z.boolean(),
+});
+
+/** 新增标签（A-17，名称唯一） */
+export const AdminKbTagCreateSchema = z.object({
+  name: z.string().min(1, '标签名不能为空').max(32, '标签名最多 32 位'),
+});
+
+/** 编辑标签（A-17） */
+export const AdminKbTagUpdateSchema = z.object({
+  name: z.string().min(1, '标签名不能为空').max(32, '标签名最多 32 位').optional(),
+});
+
+/** 权限规则（A-18，值域对齐 CONFIG_VALUE_RULES） */
+export const AdminKbPermissionRuleSchema = z.object({
+  defaultVisibility: z.enum(['PRIVATE', 'PUBLIC', 'ORG']).optional(),
+  privateScope: z.enum(['SUBMITTER', 'ORG', 'ADMIN']).optional(),
+}).refine((v) => v.defaultVisibility !== undefined || v.privateScope !== undefined, {
+  message: '至少指定一项规则',
+});
+
+/** 条目可见性切换（A-18，公开⇄私有） */
+export const AdminKbItemVisibilitySchema = z.object({
+  visibility: z.enum(['PUBLIC', 'PRIVATE']),
+});
+
+/** 增量更新策略（A-19） */
+export const AdminIndexIncrementSchema = z.object({
+  strategy: z.enum(['AUTO_DAILY', 'DAILY_ONLY']).optional(),
+});
+
+/** 退款（A-20，原因必填落审计） */
+export const AdminPayRefundSchema = z.object({
+  reason: z.string().min(2, '退款原因至少 2 位').max(200, '退款原因最多 200 位'),
+});
+
+/** 编辑支付渠道（A-20） */
+export const AdminPayChannelUpdateSchema = z.object({
+  merchantId: z.string().max(128, '商户号最多 128 位').nullable().optional(),
+  notifyUrl: z.string().max(255, '回调地址最多 255 位').nullable().optional(),
+  enabled: z.boolean().optional(),
+});
+
+/** 更新渠道密钥（A-20，AES-256-GCM 加密存储） */
+export const AdminPayChannelKeySchema = z.object({
+  secret: z.string().min(6, '密钥至少 6 位').max(256, '密钥最多 256 位'),
+});
+
+export type AdminKbReject = z.infer<typeof AdminKbRejectSchema>;
+export type AdminKbCategoryCreate = z.infer<typeof AdminKbCategoryCreateSchema>;
+export type AdminKbCategoryUpdate = z.infer<typeof AdminKbCategoryUpdateSchema>;
+export type AdminKbEnabled = z.infer<typeof AdminKbEnabledSchema>;
+export type AdminKbTagCreate = z.infer<typeof AdminKbTagCreateSchema>;
+export type AdminKbTagUpdate = z.infer<typeof AdminKbTagUpdateSchema>;
+export type AdminKbPermissionRule = z.infer<typeof AdminKbPermissionRuleSchema>;
+export type AdminKbItemVisibility = z.infer<typeof AdminKbItemVisibilitySchema>;
+export type AdminIndexIncrement = z.infer<typeof AdminIndexIncrementSchema>;
+export type AdminPayRefund = z.infer<typeof AdminPayRefundSchema>;
+export type AdminPayChannelUpdate = z.infer<typeof AdminPayChannelUpdateSchema>;
+export type AdminPayChannelKey = z.infer<typeof AdminPayChannelKeySchema>;

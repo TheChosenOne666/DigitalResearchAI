@@ -18,7 +18,11 @@ import ConfigsView from '@/views/ConfigsView.vue';
 import AuditView from '@/views/AuditView.vue';
 import MonitorView from '@/views/MonitorView.vue';
 import BackupView from '@/views/BackupView.vue';
-import PlaceholderView from '@/views/PlaceholderView.vue';
+import KbReviewView from '@/views/KbReviewView.vue';
+import KbCategoryView from '@/views/KbCategoryView.vue';
+import KbPermissionView from '@/views/KbPermissionView.vue';
+import KbIndexView from '@/views/KbIndexView.vue';
+import OrdersView from '@/views/OrdersView.vue';
 
 /** 仅平台管理员 */
 const PLATFORM = ['PLATFORM_ADMIN'];
@@ -34,8 +38,8 @@ declare module 'vue-router' {
 }
 
 /**
- * 管理端路由（M6.1）：/login 公开，其余挂在 AdminLayout 下按 4.2 权限矩阵声明 roles。
- * 占位页面统一挂 PlaceholderView，后续批次（M6.2~M6.5）替换为真实视图。
+ * 管理端路由（M6）：/login 公开，其余挂在 AdminLayout 下按 4.2 权限矩阵声明 roles。
+ * 20 个功能视图已全部落地（M6.2~M6.5 分批替换占位）。
  */
 const router = createRouter({
   history: createWebHistory(),
@@ -68,12 +72,12 @@ const router = createRouter({
         { path: 'monitor', component: MonitorView, meta: { title: '运行监控', roles: PLATFORM } },
         { path: 'backup', component: BackupView, meta: { title: '数据备份', roles: PLATFORM } },
         // 知识库管理
-        { path: 'kb/review', component: PlaceholderView, meta: { title: '入库审核', roles: PLATFORM } },
-        { path: 'kb/category', component: PlaceholderView, meta: { title: '类目管理', roles: PLATFORM } },
-        { path: 'kb/permission', component: PlaceholderView, meta: { title: '知识权限', roles: PLATFORM } },
-        { path: 'kb/index', component: PlaceholderView, meta: { title: '索引管理', roles: PLATFORM } },
+        { path: 'kb/review', component: KbReviewView, meta: { title: '入库审核', roles: PLATFORM } },
+        { path: 'kb/category', component: KbCategoryView, meta: { title: '类目管理', roles: PLATFORM } },
+        { path: 'kb/permission', component: KbPermissionView, meta: { title: '知识权限', roles: PLATFORM } },
+        { path: 'kb/index', component: KbIndexView, meta: { title: '索引管理', roles: PLATFORM } },
         // 支付中心
-        { path: 'orders', component: PlaceholderView, meta: { title: '订单与支付配置', roles: PLATFORM } },
+        { path: 'orders', component: OrdersView, meta: { title: '订单与支付配置', roles: PLATFORM } },
       ],
     },
   ],
