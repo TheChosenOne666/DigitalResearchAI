@@ -599,3 +599,185 @@ export function setSensitiveEnabled(id: string, enabled: boolean): Promise<{ id:
     body: JSON.stringify({ enabled }),
   });
 }
+
+/* ===== M6.4 任务中心 / 系统管理 ===== */
+
+/** 后台任务行（A-11） */
+export interface AdminTaskRow {
+  id: string;
+  taskNo: string;
+  type: 'SEARCH' | 'COLLECT' | 'ANALYZE' | 'REPORT' | 'INDEX' | 'BACKUP';
+  userId: string | null;
+  user: string | null;
+  status: 'WAITING' | 'RUNNING' | 'SUCCESS' | 'FAILED' | 'STOPPED';
+  progress: number;
+  stage: string | null;
+  errorLog: string | null;
+  retryCount: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** 任务日志行（A-11 错误日志面板） */
+export interface AdminTaskLogRow {
+  id: string;
+  taskId: string;
+  level: 'INFO' | 'WARN' | 'ERROR';
+  message: string;
+  createdAt: string;
+}
+
+/** 任务列表（A-11） */
+export function fetchTasks(query: { type?: string; status?: string; keyword?: string; page: number; pageSize: number }): Promise<AdminPage<AdminTaskRow>> {
+  const qs = new URLSearchParams();
+  if (query.type) qs.set('type', query.type);
+  if (query.status) qs.set('status', query.status);
+  if (query.keyword) qs.set('keyword', query.keyword);
+  qs.set('page', String(query.page));
+  qs.set('pageSize', String(query.pageSize));
+  return request<AdminPage<AdminTaskRow>>(`/api/v1/admin/tasks?${qs.toString()}`);
+}
+
+/** 重试失败任务（A-11，上限 3 次） */
+export function retryTask(id: string): Promise<AdminTaskRow> {
+  return request<AdminTaskRow>(`/api/v1/admin/tasks/${id}/retry`, { method: 'POST' });
+}
+
+/** 终止任务（A-11，不可逆） */
+export function stopTask(id: string): Promise<AdminTaskRow> {
+  return request<AdminTaskRow>(`/api/v1/admin/tasks/${id}/stop`, { method: 'POST' });
+}
+
+/** 任务日志（A-11） */
+export function fetchTaskLogs(id: string): Promise<{ task: Pick<AdminTaskRow, 'id' | 'taskNo' | 'type' | 'status' | 'progress' | 'stage' | 'errorLog' | 'retryCount'>; logs: AdminTaskLogRow[] }> {
+  return request(`/api/v1/admin/tasks/${id}/logs`);
+}
+
+/** 系统参数行（A-12） */
+export interface AdminConfigRow {
+  key: string;
+  value: string;
+  label: string;
+  remark: string | null;
+  updatedBy: string | null;
+  updatedAt: string;
+}
+
+/** 参数列表（A-12） */
+export function fetchConfigs(): Promise<AdminConfigRow[]> {
+  return request<AdminConfigRow[]>('/api/v1/admin/configs');
+}
+
+/** 更新参数值（A-12，范围校验失败返回 400） */
+export function updateConfig(key: string, value: string): Promise<AdminConfigRow> {
+  return request<AdminConfigRow>(`/api/v1/admin/configs/${key}`, {
+    method: 'PUT',
+    body: JSON.stringify({ value }),
+  });
+}
+
+/** 审计日志行（A-13） */
+export interface AdminAuditRow {
+  id: string;
+  action: string;
+  userId: string | null;
+  user: string | null;
+  ip: string | null;
+  detail: Record<string, unknown> | null;
+  success: boolean;
+  createdAt: string;
+}
+
+/** 审计查询（A-13，tab=login|export|delete） */
+export function fetchAudit(query: { tab: string; keyword?: string; result?: string; days?: number; page: number; pageSize: number }): Promise<AdminPage<AdminAuditRow>> {
+  const qs = new URLSearchParams();
+  qs.set('tab', query.tab);
+  if (query.keyword) qs.set('keyword', query.keyword);
+  if (query.result) qs.set('result', query.result);
+  if (query.days) qs.set('days', String(query.days));
+  qs.set('page', String(query.page));
+  qs.set('pageSize', String(query.pageSize));
+  return request<AdminPage<AdminAuditRow>>(`/api/v1/admin/audit?${qs.toString()}`);
+}
+
+/** 监控服务行（A-14） */
+export interface MonitorServiceRow {
+  key: string;
+  name: string;
+  address: string;
+  status: 'up' | 'down';
+}
+
+/** 服务健康状态（A-14，真实探测） */
+export interface MonitorHealth {
+  checkedAt: string;
+  uptime: number;
+  version: string;
+  services: MonitorServiceRow[];
+}
+
+/** 监控错误行（A-14） */
+export interface MonitorErrorRow {
+  time: string;
+  source: 'task' | 'sensitive';
+  service: string;
+  message: string;
+}
+
+/** 服务健康探测（A-14） */
+export function fetchMonitorHealth(): Promise<MonitorHealth> {
+  return request<MonitorHealth>('/api/v1/admin/monitor/health');
+}
+
+/** 错误日志（A-14，任务 ERROR + 平台级安全事件） */
+export function fetchMonitorErrors(query: { source?: string; keyword?: string; page: number; pageSize: number }): Promise<AdminPage<MonitorErrorRow>> {
+  const qs = new URLSearchParams();
+  if (query.source) qs.set('source', query.source);
+  if (query.keyword) qs.set('keyword', query.keyword);
+  qs.set('page', String(query.page));
+  qs.set('pageSize', String(query.pageSize));
+  return request<AdminPage<MonitorErrorRow>>(`/api/v1/admin/monitor/errors?${qs.toString()}`);
+}
+
+/** 备份策略（A-15） */
+export interface BackupPolicy {
+  scope: 'full' | 'data' | 'config';
+  schedule: 'daily' | 'weekly' | 'monthly';
+  keep: number;
+}
+
+/** 备份记录行（A-15） */
+export interface BackupRecordRow {
+  id: string;
+  scope: 'FULL' | 'DATA' | 'CONFIG';
+  sizeBytes: number | null;
+  status: 'SUCCESS' | 'FAILED';
+  message: string | null;
+  operatorId: string | null;
+  createdAt: string;
+}
+
+/** 备份策略（A-15） */
+export function fetchBackupPolicy(): Promise<BackupPolicy> {
+  return request<BackupPolicy>('/api/v1/admin/backup/policy');
+}
+
+/** 保存备份策略（A-15） */
+export function updateBackupPolicy(body: BackupPolicy): Promise<BackupPolicy> {
+  return request<BackupPolicy>('/api/v1/admin/backup/policy', { method: 'PUT', body: JSON.stringify(body) });
+}
+
+/** 立即备份（A-15，演示环境仅记录） */
+export function backupNow(): Promise<BackupRecordRow> {
+  return request<BackupRecordRow>('/api/v1/admin/backup/now', { method: 'POST' });
+}
+
+/** 备份记录（A-15） */
+export function fetchBackupRecords(page: number, pageSize: number): Promise<AdminPage<BackupRecordRow>> {
+  return request<AdminPage<BackupRecordRow>>(`/api/v1/admin/backup/records?page=${page}&pageSize=${pageSize}`);
+}
+
+/** 恢复备份（A-15，二次确认 + 审计，演示环境不真执行） */
+export function restoreBackup(id: string): Promise<{ ok: boolean; id: string }> {
+  return request<{ ok: boolean; id: string }>(`/api/v1/admin/backup/records/${id}/restore`, { method: 'POST' });
+}

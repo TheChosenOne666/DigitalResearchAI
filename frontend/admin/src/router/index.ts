@@ -13,6 +13,11 @@ import DatasetsView from '@/views/DatasetsView.vue';
 import ImportsView from '@/views/ImportsView.vue';
 import NoticesView from '@/views/NoticesView.vue';
 import SearchOpsView from '@/views/SearchOpsView.vue';
+import TasksView from '@/views/TasksView.vue';
+import ConfigsView from '@/views/ConfigsView.vue';
+import AuditView from '@/views/AuditView.vue';
+import MonitorView from '@/views/MonitorView.vue';
+import BackupView from '@/views/BackupView.vue';
 import PlaceholderView from '@/views/PlaceholderView.vue';
 
 /** 仅平台管理员 */
@@ -56,12 +61,12 @@ const router = createRouter({
         { path: 'notices', component: NoticesView, meta: { title: '消息管理', roles: PLATFORM } },
         { path: 'search-ops', component: SearchOpsView, meta: { title: '搜索词管理', roles: PLATFORM } },
         // 任务中心
-        { path: 'tasks', component: PlaceholderView, meta: { title: '任务管理', roles: PLATFORM_DATA } },
+        { path: 'tasks', component: TasksView, meta: { title: '任务管理', roles: PLATFORM_DATA } },
         // 系统管理
-        { path: 'config', component: PlaceholderView, meta: { title: '参数配置', roles: PLATFORM } },
-        { path: 'audit', component: PlaceholderView, meta: { title: '审计日志', roles: PLATFORM } },
-        { path: 'monitor', component: PlaceholderView, meta: { title: '运行监控', roles: PLATFORM } },
-        { path: 'backup', component: PlaceholderView, meta: { title: '数据备份', roles: PLATFORM } },
+        { path: 'config', component: ConfigsView, meta: { title: '参数配置', roles: PLATFORM } },
+        { path: 'audit', component: AuditView, meta: { title: '审计日志', roles: PLATFORM } },
+        { path: 'monitor', component: MonitorView, meta: { title: '运行监控', roles: PLATFORM } },
+        { path: 'backup', component: BackupView, meta: { title: '数据备份', roles: PLATFORM } },
         // 知识库管理
         { path: 'kb/review', component: PlaceholderView, meta: { title: '入库审核', roles: PLATFORM } },
         { path: 'kb/category', component: PlaceholderView, meta: { title: '类目管理', roles: PLATFORM } },

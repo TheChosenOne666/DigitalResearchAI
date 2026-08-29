@@ -43,15 +43,15 @@ const ROLES = [
 
 /** 系统参数种子（A-12 / A-15 / A-18） */
 const SYS_CONFIGS = [
-  { key: 'upload.maxSizeMb', value: '100', label: '上传文件大小上限(MB)' },
-  { key: 'task.timeoutMinutes', value: '30', label: '任务超时时间(分钟)' },
-  { key: 'list.pageSize', value: '20', label: '列表默认分页大小' },
-  { key: 'kb.matchThreshold', value: '0.6', label: '知识库检索相似度阈值' },
-  { key: 'backup.scope', value: 'full', label: '备份范围' },
-  { key: 'backup.schedule', value: 'daily', label: '备份计划' },
-  { key: 'backup.keep', value: '30', label: '备份保留天数' },
-  { key: 'kb.defaultVisibility', value: 'PRIVATE', label: '知识库默认可见性' },
-  { key: 'kb.privateScope', value: 'SUBMITTER', label: '私有条目可见范围' },
+  { key: 'upload.maxSizeMb', value: '100', label: '上传文件大小上限(MB)', remark: '单位 MB · 作用于数据上传（U-07）等' },
+  { key: 'task.timeoutMinutes', value: '30', label: '任务超时时间(分钟)', remark: '单位 分钟 · 检索任务超时、登录会话等' },
+  { key: 'list.pageSize', value: '20', label: '列表默认分页大小', remark: '条/页 · 作用于各列表页' },
+  { key: 'kb.matchThreshold', value: '0.6', label: '知识库检索相似度阈值', remark: '知识库优先匹配（U-12）默认阈值' },
+  { key: 'backup.scope', value: 'full', label: '备份范围', remark: '自动备份范围：full=全量 / data=仅业务数据 / config=仅配置' },
+  { key: 'backup.schedule', value: 'daily', label: '备份计划', remark: '执行周期：daily=每日 / weekly=每周 / monthly=每月' },
+  { key: 'backup.keep', value: '30', label: '备份保留天数', remark: '超出保留期的历史备份自动清理' },
+  { key: 'kb.defaultVisibility', value: 'PRIVATE', label: '知识库默认可见性', remark: '新入库条目默认可见性（A-18）' },
+  { key: 'kb.privateScope', value: 'SUBMITTER', label: '私有条目可见范围', remark: '私有条目可见范围（A-18）' },
 ];
 
 /** 字典种子（A-06，五类：国家地区 / 机构 / 行业 / 单位 / 时间粒度） */
@@ -174,13 +174,13 @@ async function seedAdmin() {
   }
 }
 
-/** 系统参数（按 key 幂等，缺失补齐、不覆盖既有值） */
+/** 系统参数（按 key 幂等，缺失补齐、不覆盖既有值，同步展示名与说明） */
 async function seedConfigs() {
   for (const c of SYS_CONFIGS) {
     await prisma.sysConfig.upsert({
       where: { key: c.key },
-      create: { key: c.key, value: c.value, label: c.label },
-      update: { label: c.label },
+      create: { key: c.key, value: c.value, label: c.label, remark: c.remark },
+      update: { label: c.label, remark: c.remark },
     });
   }
   console.log(`[seed] 系统参数已同步：${SYS_CONFIGS.length} 条`);

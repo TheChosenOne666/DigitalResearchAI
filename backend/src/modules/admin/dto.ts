@@ -177,6 +177,26 @@ export const AdminSensitiveEnabledSchema = z.object({
   enabled: z.boolean(),
 });
 
+/* ===== M6.4 任务中心 / 系统管理 ===== */
+
+/** 更新系统参数（A-12，取值范围校验按 key 在服务层执行） */
+export const AdminConfigUpdateSchema = z.object({
+  value: z.string().min(1, '参数值不能为空').max(512, '参数值最多 512 位'),
+});
+
+/** 备份策略（A-15，存 sys_configs：backup.scope / backup.schedule / backup.keep） */
+export const AdminBackupPolicySchema = z.object({
+  /** 备份范围：full=全量 / data=仅业务数据 / config=仅配置 */
+  scope: z.enum(['full', 'data', 'config']),
+  /** 执行周期：daily / weekly / monthly */
+  schedule: z.enum(['daily', 'weekly', 'monthly']),
+  /** 保留份数 */
+  keep: z.number().int('保留份数必须为整数').min(1, '至少保留 1 份').max(365, '最多保留 365 份'),
+});
+
+export type AdminConfigUpdate = z.infer<typeof AdminConfigUpdateSchema>;
+export type AdminBackupPolicy = z.infer<typeof AdminBackupPolicySchema>;
+
 export type AdminUserCreate = z.infer<typeof AdminUserCreateSchema>;
 export type AdminUserUpdate = z.infer<typeof AdminUserUpdateSchema>;
 export type AdminUserStatus = z.infer<typeof AdminUserStatusSchema>;

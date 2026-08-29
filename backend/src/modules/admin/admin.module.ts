@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { PrismaModule } from '../../common/prisma/prisma.module';
+import { HealthModule } from '../../common/health/health.module';
 import { AdminAuditService } from './admin-audit.service';
 import { MeController } from './me.controller';
 import { DashboardController } from './dashboard.controller';
@@ -22,6 +23,15 @@ import { AdminNoticesController } from './notices.controller';
 import { AdminNoticesService } from './notices.service';
 import { AdminSearchOpsController } from './search-ops.controller';
 import { AdminSearchOpsService } from './search-ops.service';
+import { AdminTasksController } from './tasks.controller';
+import { AdminTasksService } from './tasks.service';
+import { AdminConfigsController } from './configs.controller';
+import { AdminConfigsService } from './configs.service';
+import { AdminAuditController } from './audit.controller';
+import { AdminMonitorController } from './monitor.controller';
+import { AdminMonitorService } from './monitor.service';
+import { AdminBackupController } from './backup.controller';
+import { AdminBackupService } from './backup.service';
 
 /**
  * 管理端模块（M6）：平台级跨租户应用。
@@ -30,10 +40,11 @@ import { AdminSearchOpsService } from './search-ops.service';
  * - M6.1 装配当前用户上下文（/admin/me）与运营看板（/admin/dashboard）；
  *   M6.2 装配组织用户（A-02 用户管理 / A-03 会员管理 / A-04 角色权限）；
  *   M6.3 装配数据资源/数据治理/运营管理（A-05~A-10）；
- *   M6.4~M6.5 在 providers/controllers 中追加对应控制器与服务。
+ *   M6.4 装配任务中心（A-11）与系统管理（A-12 参数配置 / A-13 审计日志 / A-14 运行监控 / A-15 数据备份）；
+ *   M6.5 在 providers/controllers 中追加对应控制器与服务。
  */
 @Module({
-  imports: [PrismaModule],
+  imports: [PrismaModule, HealthModule],
   controllers: [
     MeController,
     DashboardController,
@@ -46,6 +57,11 @@ import { AdminSearchOpsService } from './search-ops.service';
     AdminImportsController,
     AdminNoticesController,
     AdminSearchOpsController,
+    AdminTasksController,
+    AdminConfigsController,
+    AdminAuditController,
+    AdminMonitorController,
+    AdminBackupController,
   ],
   providers: [
     DashboardService,
@@ -59,6 +75,10 @@ import { AdminSearchOpsService } from './search-ops.service';
     AdminImportsService,
     AdminNoticesService,
     AdminSearchOpsService,
+    AdminTasksService,
+    AdminConfigsService,
+    AdminMonitorService,
+    AdminBackupService,
   ],
   exports: [AdminAuditService],
 })
