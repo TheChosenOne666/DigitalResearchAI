@@ -28,6 +28,7 @@ import { SearchStoreService } from './persistence/search.store.service';
 import { KbService } from '../kb/kb.service';
 import { QuotaService } from '../member/quota.service';
 import { MetricsService } from '../../common/observability/metrics.service';
+import { RateLimitService } from '../../common/rate-limit/rate-limit.service';
 import { getRequestId } from '../../common/observability/request-context';
 import { withSpan } from '../../common/observability/tracer';
 import {
@@ -89,6 +90,7 @@ export class SearchController {
     private readonly kb: KbService,
     private readonly quota: QuotaService,
     private readonly metrics: MetricsService,
+    private readonly rateLimit: RateLimitService,
   ) {}
 
   @Get('stream')
@@ -109,6 +111,9 @@ export class SearchController {
     // 免费体验配额拦截（M5.3）：非会员仅 1 次；必须在 SSE 响应头写出前拦截，
     // 否则配额耗尽只能以 SSE error 事件表达，前端无法统一按业务码弹开通引导。
     await this.quota.consumeTrial(user.userId, user.roles);
+
+    // SSE 并发上限（M7.2）：占一个槽位，超限抛 429（发生在 SSE 头写出前，走统一异常响应）
+    await this.rateLimit.acquireSseSlot(user.userId);
 
     res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
     res.setHeader('Cache-Control', 'no-cache');
@@ -135,6 +140,7 @@ export class SearchController {
         },
       );
     } finally {
+      await this.rateLimit.releaseSseSlot(user.userId);
       this.metrics.sseClose(ac.signal.aborted);
       res.end();
     }

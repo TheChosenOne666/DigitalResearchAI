@@ -5,6 +5,8 @@ import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
 import { TransformInterceptor } from './common/interceptors/transform.interceptor';
 import { ObservabilityModule } from './common/observability/observability.module';
 import { requestContextMiddleware } from './common/observability/request-context.middleware';
+import { RateLimitModule } from './common/rate-limit/rate-limit.module';
+import { RateLimitGuard } from './common/rate-limit/rate-limit.guard';
 import { HealthModule } from './common/health/health.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { SearchModule } from './modules/search/search.module';
@@ -23,12 +25,13 @@ import { TenantContextInterceptor } from './common/auth/tenant-context.intercept
  * 应用根模块：装配全局配置、观测性（Pino/Prometheus/OTel/Sentry）、
  * 请求上下文中间件（requestId 贯穿 + pino-http 访问日志）、
  * 统一响应拦截器、统一异常过滤器、
- * 会话认证守卫（@Public 跳过）→ RBAC 角色守卫（@Roles 校验）→ 租户上下文拦截器。
+ * 会话认证守卫（@Public 跳过）→ 限流守卫（令牌桶，按路由组差异化）→ RBAC 角色守卫（@Roles 校验）→ 租户上下文拦截器。
  */
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
     ObservabilityModule,
+    RateLimitModule,
     HealthModule,
     AuthModule,
     SearchModule,
@@ -46,6 +49,7 @@ import { TenantContextInterceptor } from './common/auth/tenant-context.intercept
     RedisSessionStore,
     { provide: SessionService, useFactory: (store: RedisSessionStore) => new SessionService(store), inject: [RedisSessionStore] },
     { provide: APP_GUARD, useClass: SessionAuthGuard },
+    { provide: APP_GUARD, useClass: RateLimitGuard },
     { provide: APP_GUARD, useClass: RolesGuard },
     { provide: APP_INTERCEPTOR, useClass: TenantContextInterceptor },
   ],

@@ -8,7 +8,9 @@
     "build": "nest build",
     "start": "node dist/main.js",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "bench:sse": "node scripts/bench-sse.mjs",
+    "bench:workspace": "node scripts/bench-workspace.mjs"
   },
   "dependencies": {
     "@ai-sdk/openai": "^4.0.50",

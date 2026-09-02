@@ -40,6 +40,11 @@ export const CONFIG_VALUE_RULES: Record<string, (v: string) => string | null> = 
   'backup.keep': intRange(1, 365),
   'kb.defaultVisibility': enumRule(['PRIVATE', 'PUBLIC', 'ORG']),
   'kb.privateScope': enumRule(['SUBMITTER', 'ORG', 'ADMIN']),
+  'rate.authRate': floatRange(0.01, 1000),
+  'rate.authBurst': intRange(1, 100000),
+  'rate.globalRate': floatRange(0.01, 100000),
+  'rate.globalBurst': intRange(1, 1000000),
+  'rate.sseMaxConcurrent': intRange(1, 1000),
 };
 
 /**

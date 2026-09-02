@@ -51,6 +51,11 @@ function deps() {
   const quota = { consumeTrial: vi.fn().mockResolvedValue({ allowed: true, trialLeft: null }) };
   // M7.1：SSE 连接数/断连率指标。直接实例化但不触发 onModuleInit，避免测试连接 Redis
   const metrics = new MetricsService({ get: (_k: string, d?: string) => d } as any);
+  // M7.2：SSE 并发槽位，测试默认放行并记录调用
+  const rateLimit = {
+    acquireSseSlot: vi.fn().mockResolvedValue(undefined),
+    releaseSseSlot: vi.fn().mockResolvedValue(undefined),
+  };
   const ctrl = new SearchController(
     search as any,
     intent as any,
@@ -59,8 +64,9 @@ function deps() {
     kb as any,
     quota as any,
     metrics as any,
+    rateLimit as any,
   );
-  return { ctrl, search, intent, generate, store, kb, quota, metrics };
+  return { ctrl, search, intent, generate, store, kb, quota, metrics, rateLimit };
 }
 
 describe('SearchController.stream', () => {

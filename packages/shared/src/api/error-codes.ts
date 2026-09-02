@@ -37,6 +37,8 @@ export const ErrorCode = {
   CONFLICT: 4002,
   /** 配额已用尽 */
   QUOTA_EXCEEDED: 4003,
+  /** 请求过于频繁（限流拦截） */
+  RATE_LIMITED: 4004,
   /* ---- 5xxx 系统 ---- */
   /** 服务内部错误 */
   INTERNAL_ERROR: 5001,

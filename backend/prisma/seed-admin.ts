@@ -52,6 +52,11 @@ const SYS_CONFIGS = [
   { key: 'backup.keep', value: '30', label: '备份保留天数', remark: '超出保留期的历史备份自动清理' },
   { key: 'kb.defaultVisibility', value: 'PRIVATE', label: '知识库默认可见性', remark: '新入库条目默认可见性（A-18）' },
   { key: 'kb.privateScope', value: 'SUBMITTER', label: '私有条目可见范围', remark: '私有条目可见范围（A-18）' },
+  { key: 'rate.authRate', value: '0.5', label: '登录/验证码限流速率', remark: '令牌/秒 · 登录、短信接口 IP 维度令牌桶（M7.2）' },
+  { key: 'rate.authBurst', value: '30', label: '登录/验证码突发上限', remark: '令牌桶容量 · 短时突发令牌数（M7.2）' },
+  { key: 'rate.globalRate', value: '5', label: '普通接口限流速率', remark: '令牌/秒 · 普通读写接口用户维度令牌桶（M7.2）' },
+  { key: 'rate.globalBurst', value: '300', label: '普通接口突发上限', remark: '令牌桶容量 · 短时突发令牌数（M7.2）' },
+  { key: 'rate.sseMaxConcurrent', value: '3', label: 'SSE 并发连接上限', remark: '每用户同时进行的检索/分析长连接数（M7.2）' },
 ];
 
 /** 字典种子（A-06，五类：国家地区 / 机构 / 行业 / 单位 / 时间粒度） */
