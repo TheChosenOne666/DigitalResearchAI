@@ -38,3 +38,7 @@ AI数智研究平台原型/
 
 # 联调截图（临时验证产物，不入库）
 .shots-admin/
+
+# pnpm/node_modules 重建时的临时备份目录（safe-delete 绕过遗留，勿提交）
+node_modules_bak0902/
+nm_bak*/

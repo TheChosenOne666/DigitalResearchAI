@@ -1,0 +1,7 @@
+apiVersion: 1
+providers:
+  - name: ai-research
+    folder: AI数智研究平台
+    type: file
+    options:
+      path: /var/lib/grafana/dashboards

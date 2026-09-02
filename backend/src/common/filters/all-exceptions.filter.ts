@@ -9,6 +9,7 @@ import {
 import { ZodError } from 'zod';
 import { ErrorCode, formatZodIssues } from '@app/shared';
 import { BizException } from '../exceptions/biz.exception';
+import { captureIfEnabled } from '../observability/sentry';
 
 /** HTTP 状态码 → 业务错误码映射（1xxx 认证 / 2xxx 权限 / 4xxx 业务 / 5xxx 系统） */
 function statusToErrorCode(status: number): number {
@@ -57,6 +58,7 @@ export class AllExceptionsFilter implements ExceptionFilter {
       }
     } else if (exception instanceof Error) {
       this.logger.error(`未捕获异常: ${exception.message}`, exception.stack);
+      captureIfEnabled(exception);
     }
 
     response.status(httpStatus).json({ code, message, data: null });

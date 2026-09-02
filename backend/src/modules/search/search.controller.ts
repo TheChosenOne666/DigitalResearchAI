@@ -27,6 +27,9 @@ import { GenerateService } from './generate/generate.service';
 import { SearchStoreService } from './persistence/search.store.service';
 import { KbService } from '../kb/kb.service';
 import { QuotaService } from '../member/quota.service';
+import { MetricsService } from '../../common/observability/metrics.service';
+import { getRequestId } from '../../common/observability/request-context';
+import { withSpan } from '../../common/observability/tracer';
 import {
   serializeSse,
   type SseCondFill,
@@ -85,6 +88,7 @@ export class SearchController {
     private readonly store: SearchStoreService,
     private readonly kb: KbService,
     private readonly quota: QuotaService,
+    private readonly metrics: MetricsService,
   ) {}
 
   @Get('stream')
@@ -110,12 +114,42 @@ export class SearchController {
     res.setHeader('Cache-Control', 'no-cache');
     res.setHeader('Connection', 'keep-alive');
     res.flushHeaders?.();
+    this.metrics.sseOpen();
 
     const ac = new AbortController();
     res.on('close', () => ac.abort());
 
     const send = (event: Parameters<typeof serializeSse>[0], data: unknown) =>
       res.write(serializeSse(event, data));
+
+    try {
+      await withSpan(
+        'search.pipeline',
+        {
+          'search.mode': mode,
+          'search.question_len': question.length,
+          'request.id': getRequestId() ?? '',
+        },
+        async () => {
+          await this.runPipeline(req, res, send, ac, { question, mode, conditionsJson });
+        },
+      );
+    } finally {
+      this.metrics.sseClose(ac.signal.aborted);
+      res.end();
+    }
+  }
+
+  /** 五阶段管道主体（intent → 检索 → 融合 → 生成 → 落库），异常以 SSE error 事件表达 */
+  private async runPipeline(
+    req: AuthenticatedRequest,
+    res: Response,
+    send: (event: Parameters<typeof serializeSse>[0], data: unknown) => void,
+    ac: AbortController,
+    input: { question: string; mode: SearchMode; conditionsJson?: string },
+  ): Promise<void> {
+    const user = req.user!;
+    const { question, mode, conditionsJson } = input;
 
     let stage: SseStage['stage'] = 'intent';
     let reportId = '';
@@ -202,8 +236,6 @@ export class SearchController {
         message: e instanceof Error ? e.message : 'unknown error',
         stage,
       } satisfies SseError);
-    } finally {
-      res.end();
     }
   }
 

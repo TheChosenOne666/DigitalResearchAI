@@ -1,0 +1,79 @@
+{
+  "title": "M7 可观测总览",
+  "uid": "m7-overview",
+  "schemaVersion": 39,
+  "version": 1,
+  "time": { "from": "now-30m", "to": "now" },
+  "refresh": "15s",
+  "panels": [
+    {
+      "id": 1,
+      "title": "HTTP P95 时延（秒）",
+      "type": "timeseries",
+      "gridPos": { "x": 0, "y": 0, "w": 12, "h": 8 },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket[5m])) by (le, route))",
+          "legendFormat": "{{route}}"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "HTTP QPS",
+      "type": "timeseries",
+      "gridPos": { "x": 12, "y": 0, "w": 12, "h": 8 },
+      "targets": [
+        {
+          "expr": "sum(rate(http_request_duration_seconds_count[5m]))",
+          "legendFormat": "全部请求"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "SSE 并发连接数",
+      "type": "timeseries",
+      "gridPos": { "x": 0, "y": 8, "w": 12, "h": 8 },
+      "targets": [
+        { "expr": "sse_active_connections", "legendFormat": "活跃连接" }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "SSE 断连率（5m）",
+      "type": "timeseries",
+      "gridPos": { "x": 12, "y": 8, "w": 12, "h": 8 },
+      "targets": [
+        {
+          "expr": "rate(sse_disconnects_total[5m]) / clamp_min(rate(sse_connections_total[5m]), 0.001)",
+          "legendFormat": "断连率"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "BullMQ 队列积压（waiting）",
+      "type": "timeseries",
+      "gridPos": { "x": 0, "y": 16, "w": 12, "h": 8 },
+      "targets": [
+        {
+          "expr": "queue_job_counts{state='waiting'}",
+          "legendFormat": "{{queue}}"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "title": "LLM 错误率（5m）",
+      "type": "timeseries",
+      "gridPos": { "x": 12, "y": 16, "w": 12, "h": 8 },
+      "targets": [
+        {
+          "expr": "sum(rate(llm_calls_total{status='error'}[5m])) by (scene) / clamp_min(sum(rate(llm_calls_total[5m])) by (scene), 0.001)",
+          "legendFormat": "{{scene}}"
+        }
+      ]
+    }
+  ]
+}

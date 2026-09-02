@@ -1,0 +1,14 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+# 告警规则：对齐 M7 验收四项（HTTP P95 / SSE 断连率 / 队列积压 / LLM 错误率）
+rule_files:
+  - /etc/prometheus/alerts.yml
+
+scrape_configs:
+  - job_name: ai-research-api
+    metrics_path: /api/v1/metrics
+    # Docker Desktop 下经宿主机访问本机 dev server（:3000）
+    static_configs:
+      - targets: ['host.docker.internal:3000']

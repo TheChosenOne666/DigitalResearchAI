@@ -6,6 +6,7 @@ import type {
   SourceType,
 } from './connectors/connector.interface';
 import { fuse, type FusionOptions, type FusionResult } from './fusion/fusion.service';
+import { withSpan } from '../../common/observability/tracer';
 
 /** 单路检索超时（毫秒），超时熔断不阻塞整体；本地路含问题向量化网络调用（M3.3），预算放宽到 8s */
 export const CONNECTOR_TIMEOUT_MS: Record<SourceType, number> = {
@@ -76,9 +77,11 @@ export class SearchService {
     routes?: ReadonlySet<SourceType>,
   ): Promise<FusionResult> {
     const connectors = routes ? this.connectors.filter((c) => routes.has(c.sourceType)) : this.connectors;
-    const settled = await Promise.allSettled(
-      connectors.map((c) =>
-        runConnector(c, input, signal, CONNECTOR_TIMEOUT_MS[c.sourceType]),
+    const settled = await withSpan('search.fetch', { 'search.routes': [...connectors.map((c) => c.sourceType)].join(',') }, async () =>
+      Promise.allSettled(
+        connectors.map((c) =>
+          runConnector(c, input, signal, CONNECTOR_TIMEOUT_MS[c.sourceType]),
+        ),
       ),
     );
 
@@ -86,6 +89,6 @@ export class SearchService {
     for (const r of settled) {
       if (r.status === 'fulfilled') hits.push(...r.value);
     }
-    return fuse(hits, opts);
+    return withSpan('search.fusion', { 'search.hits': hits.length }, async () => fuse(hits, opts));
   }
 }

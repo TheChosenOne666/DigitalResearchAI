@@ -3,6 +3,7 @@ import { SearchController } from '../src/modules/search/search.controller';
 import { BizException } from '../src/common/exceptions/biz.exception';
 import { ErrorCode } from '@app/shared';
 import type { AuthenticatedRequest } from '../src/common/auth/session-auth.guard';
+import { MetricsService } from '../src/common/observability/metrics.service';
 
 /** 假 Response：收集 SSE 帧 */
 function fakeRes() {
@@ -48,6 +49,8 @@ function deps() {
   const kb = { saveSourcesToLibrary: vi.fn() };
   // M5.3 免费体验配额：默认放行
   const quota = { consumeTrial: vi.fn().mockResolvedValue({ allowed: true, trialLeft: null }) };
+  // M7.1：SSE 连接数/断连率指标。直接实例化但不触发 onModuleInit，避免测试连接 Redis
+  const metrics = new MetricsService({ get: (_k: string, d?: string) => d } as any);
   const ctrl = new SearchController(
     search as any,
     intent as any,
@@ -55,8 +58,9 @@ function deps() {
     store as any,
     kb as any,
     quota as any,
+    metrics as any,
   );
-  return { ctrl, search, intent, generate, store, kb, quota };
+  return { ctrl, search, intent, generate, store, kb, quota, metrics };
 }
 
 describe('SearchController.stream', () => {

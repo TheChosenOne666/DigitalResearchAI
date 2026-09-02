@@ -1,8 +1,10 @@
-import { Module } from '@nestjs/common';
+import { Module, type MiddlewareConsumer, type NestModule } from '@nestjs/common';
 import { APP_FILTER, APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
 import { ConfigModule } from '@nestjs/config';
 import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
 import { TransformInterceptor } from './common/interceptors/transform.interceptor';
+import { ObservabilityModule } from './common/observability/observability.module';
+import { requestContextMiddleware } from './common/observability/request-context.middleware';
 import { HealthModule } from './common/health/health.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { SearchModule } from './modules/search/search.module';
@@ -18,12 +20,15 @@ import { RolesGuard } from './common/auth/roles.guard';
 import { TenantContextInterceptor } from './common/auth/tenant-context.interceptor';
 
 /**
- * 应用根模块：装配全局配置、统一响应拦截器、统一异常过滤器、
+ * 应用根模块：装配全局配置、观测性（Pino/Prometheus/OTel/Sentry）、
+ * 请求上下文中间件（requestId 贯穿 + pino-http 访问日志）、
+ * 统一响应拦截器、统一异常过滤器、
  * 会话认证守卫（@Public 跳过）→ RBAC 角色守卫（@Roles 校验）→ 租户上下文拦截器。
  */
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
+    ObservabilityModule,
     HealthModule,
     AuthModule,
     SearchModule,
@@ -34,6 +39,8 @@ import { TenantContextInterceptor } from './common/auth/tenant-context.intercept
     AdminModule,
   ],
   providers: [
+    // 注：MetricsInterceptor 由 ObservabilityModule 内部注册（APP_INTERCEPTOR 为多值
+    // token，此处若重复注册会导致同一请求被观测两次、HTTP 指标翻倍），根模块不再声明
     { provide: APP_INTERCEPTOR, useClass: TransformInterceptor },
     { provide: APP_FILTER, useClass: AllExceptionsFilter },
     RedisSessionStore,
@@ -43,4 +50,8 @@ import { TenantContextInterceptor } from './common/auth/tenant-context.intercept
     { provide: APP_INTERCEPTOR, useClass: TenantContextInterceptor },
   ],
 })
-export class AppModule {}
+export class AppModule implements NestModule {
+  configure(consumer: MiddlewareConsumer): void {
+    consumer.apply(requestContextMiddleware).forRoutes('*');
+  }
+}

@@ -11,8 +11,15 @@ import {
   buildGeneratePrompt,
 } from '../src/modules/search/generate/generate.service';
 import type { SearchHit } from '../src/modules/search/connectors/connector.interface';
+import { MetricsService } from '../src/common/observability/metrics.service';
 
 const cfg = (over: Record<string, string> = {}): any => ({ get: (k: string) => over[k] });
+
+/**
+ * 指标服务桩：直接实例化但不触发 onModuleInit，避免测试连接 Redis。
+ * M7.1 后 GenerateService 需注入该依赖记录 LLM 调用结果。
+ */
+const metrics = (): MetricsService => new MetricsService(cfg({}));
 
 const hit = (title: string, contentMd?: string): SearchHit => ({
   title,
@@ -54,7 +61,7 @@ describe('buildGeneratePrompt', () => {
 
 describe('GenerateService.stream', () => {
   it('无 ARK_API_KEY 时降级输出检索摘要', async () => {
-    const svc = new GenerateService(cfg({}));
+    const svc = new GenerateService(cfg({}), metrics());
     const chunks: any[] = [];
     const result = await svc.stream(
       { question: 'q', conditions: {}, sources: [hit('A', 'a')] },
@@ -75,7 +82,7 @@ describe('GenerateService.stream', () => {
       })(),
       usage: Promise.resolve({ totalTokens: 42 }),
     });
-    const svc = new GenerateService(cfg({ ARK_API_KEY: 'x' }));
+    const svc = new GenerateService(cfg({ ARK_API_KEY: 'x' }), metrics());
     const chunks: any[] = [];
     const result = await svc.stream(
       { question: 'q', conditions: {}, sources: [hit('A', 'a')] },
@@ -94,7 +101,7 @@ describe('GenerateService.stream', () => {
 
   it('LLM 抛错时降级输出摘要（不阻断）', async () => {
     (streamText as any).mockRejectedValue(new Error('llm down'));
-    const svc = new GenerateService(cfg({ ARK_API_KEY: 'x' }));
+    const svc = new GenerateService(cfg({ ARK_API_KEY: 'x' }), metrics());
     const result = await svc.stream(
       { question: 'q', conditions: {}, sources: [] },
       new AbortController().signal,
@@ -106,7 +113,7 @@ describe('GenerateService.stream', () => {
 
 describe('GenerateService.streamCustom', () => {
   it('无 ARK_API_KEY 时降级输出 fallbackText', async () => {
-    const svc = new GenerateService(cfg({}));
+    const svc = new GenerateService(cfg({}), metrics());
     const chunks: any[] = [];
     const result = await svc.streamCustom(
       { system: 'sys', prompt: 'p', fallbackText: '降级正文' },
@@ -125,7 +132,7 @@ describe('GenerateService.streamCustom', () => {
       })(),
       usage: Promise.resolve({ totalTokens: 7 }),
     });
-    const svc = new GenerateService(cfg({ ARK_API_KEY: 'x' }));
+    const svc = new GenerateService(cfg({ ARK_API_KEY: 'x' }), metrics());
     const result = await svc.streamCustom(
       { system: 'SYSTEM', prompt: 'PROMPT', fallbackText: 'fb' },
       new AbortController().signal,

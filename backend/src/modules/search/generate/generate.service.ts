@@ -3,6 +3,8 @@ import { ConfigService } from '@nestjs/config';
 import { streamText } from 'ai';
 import { createOpenAI } from '@ai-sdk/openai';
 import type { SearchConditions, SearchHit } from '../connectors/connector.interface';
+import { MetricsService } from '../../../common/observability/metrics.service';
+import { withSpan } from '../../../common/observability/tracer';
 
 /** 流式正文分片（citations 为本片段出现的 {c:N} 编号） */
 export interface GenerateChunk {
@@ -82,7 +84,10 @@ export class GenerateService {
   private readonly client: any;
   private readonly enabled: boolean;
 
-  constructor(config: ConfigService) {
+  constructor(
+    config: ConfigService,
+    private readonly metrics: MetricsService,
+  ) {
     const baseURL = config.get<string>('ARK_BASE_URL') ?? 'https://ark.cn-beijing.volces.com/api/v3';
     const apiKey = config.get<string>('ARK_API_KEY') ?? '';
     const model = config.get<string>('LLM_MODEL') ?? 'deepseek-v4-pro-ga-260813';
@@ -127,12 +132,14 @@ export class GenerateService {
       return this.fallback(input.fallbackText, onChunk);
     }
     try {
-      const { textStream, usage } = await streamText({
-        model: this.client,
-        system: input.system,
-        prompt: input.prompt,
-        abortSignal: signal,
-      });
+      const { textStream, usage } = await withSpan('search.generate', {}, async () =>
+        streamText({
+          model: this.client,
+          system: input.system,
+          prompt: input.prompt,
+          abortSignal: signal,
+        }),
+      );
       let fullText = '';
       const citations: number[] = [];
       for await (const delta of textStream) {
@@ -142,8 +149,10 @@ export class GenerateService {
         onChunk({ text: delta, citations: cites });
       }
       const u = await Promise.resolve(usage).catch(() => null);
+      this.metrics.llmCall('report', 'ok');
       return { fullText, tokenUsage: u?.totalTokens ?? 0, citations };
     } catch (e) {
+      this.metrics.llmCall('report', 'error');
       this.logger.warn(`流式生成失败，降级：${e instanceof Error ? e.message : e}`);
       return this.fallback(input.fallbackText, onChunk);
     }

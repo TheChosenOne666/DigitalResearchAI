@@ -1,0 +1,40 @@
+groups:
+  - name: ai-research-core
+    rules:
+      - alert: HttpHighLatencyP95
+        expr: |
+          histogram_quantile(0.95,
+            sum(rate(http_request_duration_seconds_bucket[5m])) by (le, route)
+          ) > 5
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: 'HTTP P95 时延超过 5s（route={{ $labels.route }}）'
+
+      - alert: SseHighDisconnectRate
+        expr: |
+          rate(sse_disconnects_total[5m]) / clamp_min(rate(sse_connections_total[5m]), 0.001) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: 'SSE 断连率超过 10%'
+
+      - alert: QueueBacklogHigh
+        expr: queue_job_counts{state='waiting'} > 100
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: '队列 {{ $labels.queue }} 积压超过 100'
+
+      - alert: LlmHighErrorRate
+        expr: |
+          sum(rate(llm_calls_total{status='error'}[5m])) by (scene)
+            / clamp_min(sum(rate(llm_calls_total[5m])) by (scene), 0.001) > 0.2
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: 'LLM 场景 {{ $labels.scene }} 错误率超过 20%'

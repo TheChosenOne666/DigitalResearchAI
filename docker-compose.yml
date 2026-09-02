@@ -49,7 +49,47 @@ services:
       timeout: 3s
       retries: 10
 
+  # —— M7.1 观测栈：Jaeger（链路）/ Prometheus（指标）/ Grafana（面板）——
+  jaeger:
+    # 1.62 这个 tag 在 Docker Hub 不存在（not found），latest 实测可拉
+    image: jaegertracing/all-in-one:latest
+    container_name: ai-jaeger
+    restart: unless-stopped
+    ports:
+      - '16686:16686' # UI
+      - '4318:4318' # OTLP HTTP
+    environment:
+      COLLECTOR_OTLP_ENABLED: 'true'
+
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    container_name: ai-prometheus
+    restart: unless-stopped
+    ports:
+      - '9091:9090'
+    volumes:
+      - ./infra/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./infra/prometheus/alerts.yml:/etc/prometheus/alerts.yml:ro
+      - prom_data:/prometheus
+    extra_hosts:
+      - 'host.docker.internal:host-gateway'
+
+  grafana:
+    image: grafana/grafana:11.2.0
+    container_name: ai-grafana
+    restart: unless-stopped
+    ports:
+      - '3300:3000'
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: admin
+    volumes:
+      - ./infra/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./infra/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana_data:/var/lib/grafana
+
 volumes:
   pg_data:
   qdrant_data:
   redis_data:
+  prom_data:
+  grafana_data:

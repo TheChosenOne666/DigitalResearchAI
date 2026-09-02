@@ -4,6 +4,8 @@ import { generateObject } from 'ai';
 import { createOpenAI } from '@ai-sdk/openai';
 import { SearchIntentSchema, type SearchIntent } from '@app/shared';
 import type { SearchConditions } from '../connectors/connector.interface';
+import { MetricsService } from '../../../common/observability/metrics.service';
+import { withSpan } from '../../../common/observability/tracer';
 
 /**
  * 意图分类服务（M2.2）：调用方舟 DeepSeek（OpenAI 兼容协议）做结构化抽取，
@@ -15,7 +17,10 @@ export class IntentService {
   private readonly client: any;
   private readonly enabled: boolean;
 
-  constructor(config: ConfigService) {
+  constructor(
+    config: ConfigService,
+    private readonly metrics: MetricsService,
+  ) {
     const baseURL = config.get<string>('ARK_BASE_URL') ?? 'https://ark.cn-beijing.volces.com/api/v3';
     const apiKey = config.get<string>('ARK_API_KEY') ?? '';
     const model = config.get<string>('LLM_MODEL') ?? 'deepseek-v4-pro-ga-260813';
@@ -47,22 +52,26 @@ export class IntentService {
       return {};
     }
     try {
-      const { object } = await generateObject({
-        model: this.client,
-        // 规避 AI SDK 对 ZodDefault 嵌套 schema 的深层类型推断（TS2589）
-        schema: SearchIntentSchema as any,
-        system:
-          '你是「AI 数智研究平台」的检索意图理解引擎。从用户问题中抽取可用于结构化检索的条件：\n' +
-          '- countries：涉及的国家/地区（中文名或 ISO3），如「美国」「中国」；无则空数组\n' +
-          '- indicators：涉及的指标（中文名或 WDI 代码），如「GDP」「人均GDP」；无则空数组\n' +
-          '- yearFrom / yearTo：时间区间；仅当问题明确提及年份时填写，否则 null\n' +
-          '- routeHints：倾向走的检索路；vertical=垂直数据库(如世界银行)、web=联网搜索、local=知识库；无法判断则空数组\n' +
-          '只输出符合 schema 的 JSON，不要任何解释文字。',
-        prompt: question,
-        abortSignal: signal,
-      });
+      const { object } = await withSpan('search.intent', { 'search.question_len': question.length }, async () =>
+        generateObject({
+          model: this.client,
+          // 规避 AI SDK 对 ZodDefault 嵌套 schema 的深层类型推断（TS2589）
+          schema: SearchIntentSchema as any,
+          system:
+            '你是「AI 数智研究平台」的检索意图理解引擎。从用户问题中抽取可用于结构化检索的条件：\n' +
+            '- countries：涉及的国家/地区（中文名或 ISO3），如「美国」「中国」；无则空数组\n' +
+            '- indicators：涉及的指标（中文名或 WDI 代码），如「GDP」「人均GDP」；无则空数组\n' +
+            '- yearFrom / yearTo：时间区间；仅当问题明确提及年份时填写，否则 null\n' +
+            '- routeHints：倾向走的检索路；vertical=垂直数据库(如世界银行)、web=联网搜索、local=知识库；无法判断则空数组\n' +
+            '只输出符合 schema 的 JSON，不要任何解释文字。',
+          prompt: question,
+          abortSignal: signal,
+        }),
+      );
+      this.metrics.llmCall('intent', 'ok');
       return toConditions(object as SearchIntent);
     } catch (e) {
+      this.metrics.llmCall('intent', 'error');
       this.logger.warn(`意图分类失败，降级跳过：${e instanceof Error ? e.message : e}`);
       return {};
     }
