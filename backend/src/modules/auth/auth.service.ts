@@ -3,10 +3,24 @@ import { ErrorCode, LoginResult } from '@app/shared';
 import { BizException } from '../../common/exceptions/biz.exception';
 import { SessionService } from '../../common/auth/session.service';
 import { PrismaService } from '../../common/prisma/prisma.service';
-import { SmsCodeService } from './sms-code.service';
+import { SmsCodeService, type SmsKvStore } from './sms-code.service';
 
 /** 内置角色编码（RBAC 三角色） */
 export const ROLE_USER = 'USER';
+
+/** 登录防刷策略（账号维度，可注入便于测试） */
+export interface LoginGuardPolicy {
+  /** 连续失败锁定阈值 */
+  maxFailures: number;
+  /** 锁定窗口（秒） */
+  lockSeconds: number;
+}
+
+/** 默认登录防刷：连续失败 5 次锁 15 分钟 */
+export const DEFAULT_LOGIN_POLICY: LoginGuardPolicy = {
+  maxFailures: 5,
+  lockSeconds: 15 * 60,
+};
 
 /**
  * 认证服务：短信验证码登录（未注册自动创建）+ 账密登录 + 会话管理（Redis session）。
@@ -19,6 +33,8 @@ export class AuthService {
     private readonly prisma: PrismaService,
     private readonly session: SessionService,
     private readonly sms: SmsCodeService,
+    private readonly kv: SmsKvStore,
+    private readonly loginPolicy: LoginGuardPolicy = DEFAULT_LOGIN_POLICY,
   ) {}
 
   /** 查询用户（含角色编码），供登录复用 */
@@ -84,10 +100,14 @@ export class AuthService {
     return this.buildLoginResult(user);
   }
 
-  /** 账号密码登录 */
+  /** 账号密码登录（含账号维度防刷：连续失败锁定，防撞库） */
   async passwordLogin(phone: string, password: string): Promise<LoginResult> {
+    await this.assertLoginAllowed(phone);
+
     const user = await this.findUserWithRoles(phone);
     if (!user || !user.passwordHash) {
+      // 用户不存在也记一次失败：避免攻击者借此枚举已注册手机号
+      await this.recordLoginFailure(phone);
       throw new BizException(ErrorCode.LOGIN_FAILED, '账号或密码错误', 401);
     }
     this.assertActive(user);
@@ -95,12 +115,37 @@ export class AuthService {
     const { compare } = await import('bcryptjs');
     const ok = await compare(password, user.passwordHash);
     if (!ok) {
+      await this.recordLoginFailure(phone);
       throw new BizException(ErrorCode.LOGIN_FAILED, '账号或密码错误', 401);
     }
 
+    await this.clearLoginFailures(phone);
     await this.prisma.user.update({ where: { id: user.id }, data: { lastLoginAt: new Date() } });
     await this.auditLogin(user.id, user.tenantId, 'PASSWORD');
     return this.buildLoginResult(user);
+  }
+
+  /** 账号维度失败计数键 */
+  private failKey(phone: string): string {
+    return `login:fail:${phone}`;
+  }
+
+  /** 登录前校验：连续失败达阈值即拒绝（锁定窗口内一律拦截） */
+  private async assertLoginAllowed(phone: string): Promise<void> {
+    const n = Number((await this.kv.get(this.failKey(phone))) ?? 0);
+    if (n >= this.loginPolicy.maxFailures) {
+      throw new BizException(ErrorCode.LOGIN_LOCKED, '账号因连续登录失败被临时锁定，请稍后再试', 429);
+    }
+  }
+
+  /** 记录一次登录失败（自增计数，键首次创建时设置锁定窗口 TTL） */
+  private async recordLoginFailure(phone: string): Promise<void> {
+    await this.kv.incr(this.failKey(phone), this.loginPolicy.lockSeconds);
+  }
+
+  /** 登录成功后清零失败计数 */
+  private async clearLoginFailures(phone: string): Promise<void> {
+    await this.kv.del(this.failKey(phone));
   }
 
   /** 登出：销毁会话（幂等） */

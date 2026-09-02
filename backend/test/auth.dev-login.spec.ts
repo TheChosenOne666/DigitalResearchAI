@@ -49,7 +49,9 @@ function makeSession(): SessionService {
 }
 
 function makeService(prisma: PrismaService = makePrisma(), session: SessionService = makeSession()): AuthService {
-  return new AuthService(prisma, session, {} as SmsCodeService);
+  // devLogin 不经过登录防刷路径，kv 传空实现即可
+  const kv = { get: vi.fn(), set: vi.fn(), del: vi.fn(), incr: vi.fn() } as never;
+  return new AuthService(prisma, session, {} as SmsCodeService, kv);
 }
 
 describe('AuthService.devLogin', () => {

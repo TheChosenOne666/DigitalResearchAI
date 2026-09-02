@@ -20,6 +20,8 @@ export const ErrorCode = {
   LOGIN_FAILED: 1008,
   /** 账号已被禁用 */
   ACCOUNT_DISABLED: 1009,
+  /** 连续登录失败次数过多，账号被临时锁定（防撞库） */
+  LOGIN_LOCKED: 1010,
   /* ---- 2xxx 权限与租户 ---- */
   /** 无权限访问该资源 */
   FORBIDDEN: 2001,

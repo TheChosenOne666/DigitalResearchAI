@@ -10,7 +10,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "bench:sse": "node scripts/bench-sse.mjs",
-    "bench:workspace": "node scripts/bench-workspace.mjs"
+    "bench:workspace": "node scripts/bench-workspace.mjs",
+    "bench:audit": "node scripts/security-audit.mjs"
   },
   "dependencies": {
     "@ai-sdk/openai": "^4.0.50",
