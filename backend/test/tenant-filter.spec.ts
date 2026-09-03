@@ -33,6 +33,16 @@ describe('tenant-filter（租户强制注入纯函数）', () => {
     expect(args.where).toEqual({ status: 'ACTIVE' }); // 原对象未被改
   });
 
+  it('findMany：where 缺省时也注入（否则退化为全表查询，跨租户泄漏）', () => {
+    const out = applyTenantFilter({ orderBy: { createdAt: 'desc' } }, 'findMany', 't-1');
+    expect(out.where).toEqual({ tenantId: 't-1' });
+  });
+
+  it('findUnique：where 缺省时同样注入 tenantId', () => {
+    const out = applyTenantFilter({}, 'findUnique', 't-1');
+    expect(out.where).toEqual({ tenantId: 't-1' });
+  });
+
   it('create：data 注入 tenantId', () => {
     const out = applyTenantFilter({ data: { phone: '13800001111' } }, 'create', 't-1');
     expect(out.data).toEqual({ phone: '13800001111', tenantId: 't-1' });

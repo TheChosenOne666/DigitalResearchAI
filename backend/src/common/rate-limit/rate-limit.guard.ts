@@ -5,6 +5,7 @@ import { RateLimitService } from './rate-limit.service';
 /** 请求上可用的最小形状（路由模板 + 客户端 IP + 会话用户上下文） */
 interface RateLimitRequest {
   path?: string;
+  baseUrl?: string;
   ip?: string;
   route?: { path?: string };
   user?: { userId?: string };
@@ -12,6 +13,15 @@ interface RateLimitRequest {
 
 /** 基础设施端点（健康检查 / Prometheus 抓取），不纳入限流 */
 const EXEMPT_PATHS = new Set(['/health', '/metrics']);
+
+/** 全局前缀（main.ts setGlobalPrefix），分组匹配前剥离，避免 startsWith('/auth') 失配 */
+const GLOBAL_PREFIX = '/api/v1';
+
+/** 取分组用路径：路由模板含全局前缀，剥掉后再匹配 */
+function resolveGroupPath(req: RateLimitRequest): string {
+  const raw = req.route?.path ? `${req.baseUrl ?? ''}${req.route.path}` : (req.path ?? '');
+  return raw.startsWith(GLOBAL_PREFIX) ? raw.slice(GLOBAL_PREFIX.length) : raw;
+}
 
 /**
  * 全局限流守卫（M7.2）：按路由组差异化阈值。
@@ -33,7 +43,7 @@ export class RateLimitGuard implements CanActivate {
     }
 
     const req = context.switchToHttp().getRequest<RateLimitRequest>();
-    const path = req.route?.path ?? req.path ?? '';
+    const path = resolveGroupPath(req);
     const ip = req.ip ?? 'unknown';
 
     if (EXEMPT_PATHS.has(path)) return true;

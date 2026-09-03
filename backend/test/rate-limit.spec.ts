@@ -163,4 +163,19 @@ describe('M7.2 RateLimitGuard 路由组', () => {
     expect(await guard.canActivate(makeCtx('/auth/login'))).toBe(true);
     expect(calls).toEqual([]);
   });
+
+  // 运行时 req.route.path 携带全局前缀 /api/v1（渗透自测发现的分组失配），剥离后分组必须一致
+  it('带全局前缀的真实路由路径：auth 最严 / metrics 豁免 / SSE 跳过', async () => {
+    const calls: string[] = [];
+    const guard = makeGuard({
+      checkAuth: async () => { calls.push('auth'); },
+      checkGlobal: async () => { calls.push('global'); },
+    });
+    expect(await guard.canActivate(makeCtx('/api/v1/auth/login', { ip: '9.9.9.9' }))).toBe(true);
+    expect(await guard.canActivate(makeCtx('/api/v1/auth/sms/send', { ip: '9.9.9.9' }))).toBe(true);
+    expect(await guard.canActivate(makeCtx('/api/v1/metrics'))).toBe(true);
+    expect(await guard.canActivate(makeCtx('/api/v1/health'))).toBe(true);
+    expect(await guard.canActivate(makeCtx('/api/v1/search/stream'))).toBe(true);
+    expect(calls).toEqual(['auth', 'auth']);
+  });
 });

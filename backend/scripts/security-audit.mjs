@@ -147,10 +147,42 @@ async function checkInjection() {
   }
 }
 
-// ── 4. 支付回调重放 ─────────────────────────────────────────────────
+// ── 4. 支付回调重放（复用 M5 幂等语义） ─────────────────────────────
 async function checkPayReplay() {
-  // 需要真实订单：先下单再 mock-pay 两次。依赖支付链路可用，否则跳过。
-  report('支付回调重放', 'mock-pay 重复回调幂等', 'SKIP', '需先创建订单（依赖支付链路，环境未就绪时跳过）');
+  const token = (await devLogin(args.tenantA)) ?? (await passwordLogin(args.tenantA, 'x'));
+  if (!token) {
+    report('支付重放', 'mock-pay 重复回调幂等', 'SKIP', '无法取得测试会话（dev-login 未开启或账号不可用）');
+    return;
+  }
+  const plans = await req('/api/v1/member/plans', { token });
+  const plansList = (plans.body?.data?.levels ?? []).flatMap((lv) => lv?.plans ?? []);
+  const plan = plansList.find((p) => (p?.priceCents ?? 0) > 0) ?? plansList[0];
+  if (!plan?.id) {
+    report('支付重放', 'mock-pay 重复回调幂等', 'SKIP', '无可用付费套餐');
+    return;
+  }
+  const created = await req('/api/v1/member/orders', { method: 'POST', token, body: { planId: plan.id } });
+  const orderNo = created.body?.data?.orderNo;
+  if (!orderNo) {
+    report('支付重放', 'mock-pay 重复回调幂等', 'SKIP', `下单失败 HTTP ${created.status}`);
+    return;
+  }
+  const expOf = async () => (await req('/api/v1/member/subscription', { token })).body?.data?.expireAt ?? null;
+  const exp0 = await expOf();
+  const first = await req(`/api/v1/member/orders/${orderNo}/mock-pay`, { method: 'POST', token });
+  const exp1 = await expOf();
+  const replay = await req(`/api/v1/member/orders/${orderNo}/mock-pay`, { method: 'POST', token });
+  const exp2 = await expOf();
+  // 幂等判定：首付成功且到期时间推进一次；重放被拒且到期时间不再变化（不重复入账）
+  const paidOk = first.status === 200 && exp1 && exp1 !== exp0;
+  const replayBlocked = replay.status !== 200 && replay.status !== 201;
+  const noDoubleCredit = exp2 === exp1;
+  report(
+    '支付重放',
+    'mock-pay 重复回调幂等',
+    paidOk && replayBlocked && noDoubleCredit ? 'PASS' : 'FAIL',
+    `首付 HTTP ${first.status}、重放 HTTP ${replay.status}、到期 ${exp0 ?? '无'}→${exp1 ?? '无'}→${exp2 ?? '无'}`,
+  );
 }
 
 // ── 5. 限流绕过（X-Forwarded-For 伪造） ─────────────────────────────

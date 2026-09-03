@@ -73,8 +73,9 @@ export function applyTenantFilter<T extends Record<string, unknown>>(
 ): T {
   const next: Record<string, unknown> = { ...args };
 
-  if (WHERE_OPS.has(operation) && next.where !== undefined) {
-    next.where = { ...(next.where as Record<string, unknown>), tenantId };
+  // where 缺省时也必须注入：findMany 无 where 会退化为全表查询，造成跨租户泄漏
+  if (WHERE_OPS.has(operation)) {
+    next.where = { ...((next.where as Record<string, unknown>) ?? {}), tenantId };
   }
 
   if (CREATE_OPS.has(operation)) {
