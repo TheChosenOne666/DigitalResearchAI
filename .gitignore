@@ -42,3 +42,6 @@ AI数智研究平台原型/
 # pnpm/node_modules 重建时的临时备份目录（safe-delete 绕过遗留，勿提交）
 node_modules_bak0902/
 nm_bak*/
+
+# M7.4 数据库备份文件（真实执行产物，不入库）
+backups/

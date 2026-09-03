@@ -11,7 +11,8 @@
     "test:watch": "vitest",
     "bench:sse": "node scripts/bench-sse.mjs",
     "bench:workspace": "node scripts/bench-workspace.mjs",
-    "bench:audit": "node scripts/security-audit.mjs"
+    "bench:audit": "node scripts/security-audit.mjs",
+    "backup:drill": "node scripts/backup-restore-drill.mjs"
   },
   "dependencies": {
     "@ai-sdk/openai": "^4.0.50",

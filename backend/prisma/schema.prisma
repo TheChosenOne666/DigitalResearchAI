@@ -1064,14 +1064,18 @@ enum BackupScope {
   CONFIG
 }
 
-/// 备份记录（A-15；演示环境仅落记录，不执行真实备份）
+/// 备份记录（A-15；M7.4 起真实执行 pg_dump，type 区分备份/恢复演练）
 model BackupRecord {
   /// 主键
   id String @id @default(cuid()) @db.VarChar(32)
   /// 备份范围
   scope BackupScope @default(FULL)
+  /// 记录类型（BACKUP=备份 / DRILL=恢复演练）
+  type String @default("BACKUP") @db.VarChar(16)
   /// 大小（字节；未真实执行时为空）
   sizeBytes Int? @map("size_bytes")
+  /// 备份文件路径（M7.4 真实执行后落盘）
+  filePath String? @map("file_path") @db.VarChar(512)
   /// 状态（SUCCESS / FAILED）
   status String @default("SUCCESS") @db.VarChar(16)
   /// 失败原因等备注

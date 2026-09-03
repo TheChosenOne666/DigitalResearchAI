@@ -31,7 +31,7 @@ import { AdminAuditController } from './audit.controller';
 import { AdminMonitorController } from './monitor.controller';
 import { AdminMonitorService } from './monitor.service';
 import { AdminBackupController } from './backup.controller';
-import { AdminBackupService } from './backup.service';
+import { AdminBackupService, DockerCommandRunner } from './backup.service';
 import { AdminKbController } from './kb-admin.controller';
 import { AdminKbService } from './kb-admin.service';
 import { AdminPayController } from './pay-admin.controller';
@@ -85,6 +85,7 @@ import { KbModule } from '../kb/kb.module';
     AdminTasksService,
     AdminConfigsService,
     AdminMonitorService,
+    DockerCommandRunner,
     AdminBackupService,
     AdminKbService,
     AdminPayService,

@@ -5,6 +5,13 @@ import { AdminMonitorService, mergeErrorRows } from '../src/modules/admin/monito
 import { AdminBackupService, buildTaskNo } from '../src/modules/admin/backup.service';
 import { ErrorCode } from '@app/shared';
 
+// M7.4 backupNow 真实执行会写 backups/ 目录，单测 mock 掉 fs 避免真实落盘
+vi.mock('node:fs/promises', () => ({
+  mkdir: vi.fn().mockResolvedValue(undefined),
+  writeFile: vi.fn().mockResolvedValue(undefined),
+  unlink: vi.fn().mockResolvedValue(undefined),
+}));
+
 describe('AdminConfigsService（参数配置 A-12）', () => {
   it('validateConfigValue：各参数范围校验', () => {
     expect(validateConfigValue('upload.maxSizeMb', '200')).toBeNull();
@@ -182,6 +189,18 @@ describe('AdminBackupService（数据备份 A-15）', () => {
     };
   }
 
+  // M7.4 构造辅助：ConfigService 返回默认值 + runner 返回假 dump buffer（不真实连 Docker）
+  const mockConfig = { get: (_k: string, d?: string) => d } as never;
+  const makeRunner = (over: { stdout?: Buffer; fail?: boolean } = {}) =>
+    ({
+      run: vi.fn().mockImplementation(async () => {
+        if (over.fail) throw new Error('pg_dump failed');
+        return { stdout: over.stdout ?? Buffer.from('dump-bytes'), stderr: '' };
+      }),
+    }) as never;
+  const makeSvc = (prisma: unknown, runnerOver: { stdout?: Buffer; fail?: boolean } = {}) =>
+    new AdminBackupService(prisma as never, mockConfig, makeRunner(runnerOver));
+
   it('buildTaskNo 生成当日序号编号', () => {
     expect(buildTaskNo('BK', new Date(2026, 7, 29), 1)).toBe('BK-20260829-001');
     expect(buildTaskNo('BK', new Date(2026, 11, 5), 12)).toBe('BK-20261205-012');
@@ -189,7 +208,7 @@ describe('AdminBackupService（数据备份 A-15）', () => {
 
   it('getPolicy 缺失配置回退默认值', async () => {
     const prisma = buildPrisma({ sysConfig: { findMany: vi.fn().mockResolvedValue([]), upsert: vi.fn() } });
-    const svc = new AdminBackupService(prisma as never);
+    const svc = makeSvc(prisma);
     const policy = await svc.getPolicy();
     expect(policy).toEqual({ scope: 'full', schedule: 'daily', keep: 30 });
   });
@@ -209,7 +228,7 @@ describe('AdminBackupService（数据备份 A-15）', () => {
         }),
       },
     };
-    const svc = new AdminBackupService(prisma as never);
+    const svc = makeSvc(prisma);
     const policy = await svc.updatePolicy({ scope: 'data', schedule: 'weekly', keep: 7 });
     expect(policy.scope).toBe('data');
     expect(policy.schedule).toBe('weekly');
@@ -219,7 +238,7 @@ describe('AdminBackupService（数据备份 A-15）', () => {
 
   it('backupNow 落 sys_tasks(BACKUP) + backup_records', async () => {
     const prisma = buildPrisma();
-    const svc = new AdminBackupService(prisma as never);
+    const svc = makeSvc(prisma);
     await svc.backupNow();
     expect(prisma.sysTask.create).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -240,7 +259,7 @@ describe('AdminBackupService（数据备份 A-15）', () => {
         findUnique: vi.fn().mockResolvedValue({ id: 'b1', status: 'FAILED' }),
       },
     });
-    const svc = new AdminBackupService(prisma as never);
+    const svc = makeSvc(prisma);
     await expect(svc.restore('b1')).rejects.toMatchObject({ bizCode: ErrorCode.CONFLICT });
   });
 
@@ -251,7 +270,7 @@ describe('AdminBackupService（数据备份 A-15）', () => {
         findUnique: vi.fn().mockResolvedValue({ id: 'b1', status: 'SUCCESS', scope: 'FULL' }),
       },
     });
-    const svc = new AdminBackupService(prisma as never);
+    const svc = makeSvc(prisma);
     const res = await svc.restore('b1');
     expect(res.ok).toBe(true);
   });
