@@ -104,7 +104,8 @@ function main() {
   // 4. 结果写 backup_records（type=DRILL）
   const summary = Object.entries(rows).map(([t, v]) => `${t}=${v.src}/${v.dst}`).join(',');
   const now = new Date().toISOString();
-  const insert = `INSERT INTO backup_records (id, scope, type, status, message, file_path, created_at) VALUES (gen_random_uuid()::varchar, 'FULL', 'DRILL', 'SUCCESS', '恢复演练通过: ${summary}', '${dumpPath}', '${now}')`;
+  // id 为 varchar(32)（cuid），uuid 去连字符恰好 32 位十六进制
+  const insert = `INSERT INTO backup_records (id, scope, type, status, message, file_path, created_at) VALUES (replace(gen_random_uuid()::text, '-', ''), 'FULL', 'DRILL', 'SUCCESS', '恢复演练通过: ${summary}', '${dumpPath}', '${now}')`;
   sh(['psql', '-U', DB_USER, '-d', DB_NAME, '-c', insert]);
   console.log('  演练结果已写入 backup_records（type=DRILL）');
 
