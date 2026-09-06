@@ -1,8 +1,11 @@
-import { Body, Controller, Get, HttpCode, HttpStatus, Param, Patch, Post, Put, Query } from '@nestjs/common';
+﻿import { Body, Controller, Get, HttpCode, HttpStatus, Param, Patch, Post, Put, Query } from '@nestjs/common';
 import { RoleCode, Roles } from '../../common/auth/roles.decorator';
 import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe';
 import { AdminAuditService } from './admin-audit.service';
-import { AdminKbService } from './kb-admin.service';
+import { KbReviewAdminService } from './kb-review.admin.service';
+import { KbTaxonomyAdminService } from './kb-taxonomy.admin.service';
+import { KbPermAdminService } from './kb-perm.admin.service';
+import { KbIndexAdminService } from './kb-index.admin.service';
 import {
   AdminKbRejectSchema, AdminKbCategoryCreateSchema, AdminKbCategoryUpdateSchema,
   AdminKbEnabledSchema, AdminKbTagCreateSchema, AdminKbTagUpdateSchema,
@@ -15,12 +18,16 @@ import {
 /**
  * 知识库管理（A-16~A-19，M6.5）：知识审核 / 分类标签 / 权限 / 索引，仅平台管理员。
  * 接口前缀 /api/v1/admin/kb，跨租户数据访问（D1/D3）。
+ * 服务按页面域拆分：审核（Review）/ 分类标签（Taxonomy）/ 权限（Perm）/ 索引（Index）。
  */
 @Controller('admin/kb')
 @Roles(RoleCode.PLATFORM_ADMIN)
 export class AdminKbController {
   constructor(
-    private readonly kb: AdminKbService,
+    private readonly reviews: KbReviewAdminService,
+    private readonly taxonomy: KbTaxonomyAdminService,
+    private readonly perm: KbPermAdminService,
+    private readonly index: KbIndexAdminService,
     private readonly audit: AdminAuditService,
   ) {}
 
@@ -34,14 +41,14 @@ export class AdminKbController {
     @Query('page') page?: string,
     @Query('pageSize') pageSize?: string,
   ) {
-    return this.kb.listReviews({ keyword, page: Number(page) || 1, pageSize: Number(pageSize) || 20 });
+    return this.reviews.listReviews({ keyword, page: Number(page) || 1, pageSize: Number(pageSize) || 20 });
   }
 
   /** 审核通过（触发学习） */
   @Post('reviews/:id/approve')
   @HttpCode(HttpStatus.OK)
   async approveReview(@Param('id') id: string) {
-    const res = await this.kb.approveReview(id);
+    const res = await this.reviews.approveReview(id);
     await this.audit.record({ targetType: 'KB_DOCUMENT', targetId: id, detail: { action: 'approve', status: res.status } });
     return res;
   }
@@ -50,7 +57,7 @@ export class AdminKbController {
   @Post('reviews/:id/reject')
   @HttpCode(HttpStatus.OK)
   async rejectReview(@Param('id') id: string, @Body(new ZodValidationPipe(AdminKbRejectSchema)) body: AdminKbReject) {
-    const res = await this.kb.rejectReview(id, body.reason);
+    const res = await this.reviews.rejectReview(id, body.reason);
     await this.audit.record({ targetType: 'KB_DOCUMENT', targetId: id, detail: { action: 'reject', reason: body.reason } });
     return res;
   }
@@ -59,7 +66,7 @@ export class AdminKbController {
   @Get('reviews/:id/trace')
   @HttpCode(HttpStatus.OK)
   trace(@Param('id') id: string) {
-    return this.kb.trace(id);
+    return this.reviews.trace(id);
   }
 
   // ===== A-17 分类 / 标签 =====
@@ -67,13 +74,13 @@ export class AdminKbController {
   @Get('categories')
   @HttpCode(HttpStatus.OK)
   listCategories() {
-    return this.kb.listCategories();
+    return this.taxonomy.listCategories();
   }
 
   @Post('categories')
   @HttpCode(HttpStatus.CREATED)
   async createCategory(@Body(new ZodValidationPipe(AdminKbCategoryCreateSchema)) body: AdminKbCategoryCreate) {
-    const row = await this.kb.createCategory(body);
+    const row = await this.taxonomy.createCategory(body);
     await this.audit.record({ targetType: 'KB_CATEGORY', targetId: row.id, detail: { action: 'create', name: row.name, parentId: row.parentId } });
     return row;
   }
@@ -84,7 +91,7 @@ export class AdminKbController {
     @Param('id') id: string,
     @Body(new ZodValidationPipe(AdminKbCategoryUpdateSchema)) body: AdminKbCategoryUpdate,
   ) {
-    const row = await this.kb.updateCategory(id, body);
+    const row = await this.taxonomy.updateCategory(id, body);
     await this.audit.record({ targetType: 'KB_CATEGORY', targetId: id, detail: { action: 'update', ...body } });
     return row;
   }
@@ -92,7 +99,7 @@ export class AdminKbController {
   @Patch('categories/:id/enabled')
   @HttpCode(HttpStatus.OK)
   async setCategoryEnabled(@Param('id') id: string, @Body(new ZodValidationPipe(AdminKbEnabledSchema)) body: AdminKbEnabled) {
-    const res = await this.kb.setCategoryEnabled(id, body.enabled);
+    const res = await this.taxonomy.setCategoryEnabled(id, body.enabled);
     await this.audit.record({ targetType: 'KB_CATEGORY', targetId: id, detail: { action: body.enabled ? 'enable' : 'disable' } });
     return res;
   }
@@ -100,13 +107,13 @@ export class AdminKbController {
   @Get('tags')
   @HttpCode(HttpStatus.OK)
   listTags() {
-    return this.kb.listTags();
+    return this.taxonomy.listTags();
   }
 
   @Post('tags')
   @HttpCode(HttpStatus.CREATED)
   async createTag(@Body(new ZodValidationPipe(AdminKbTagCreateSchema)) body: AdminKbTagCreate) {
-    const row = await this.kb.createTag(body);
+    const row = await this.taxonomy.createTag(body);
     await this.audit.record({ targetType: 'KB_TAG', targetId: row.id, detail: { action: 'create', name: row.name } });
     return row;
   }
@@ -114,7 +121,7 @@ export class AdminKbController {
   @Put('tags/:id')
   @HttpCode(HttpStatus.OK)
   async updateTag(@Param('id') id: string, @Body(new ZodValidationPipe(AdminKbTagUpdateSchema)) body: AdminKbTagUpdate) {
-    const row = await this.kb.updateTag(id, body);
+    const row = await this.taxonomy.updateTag(id, body);
     await this.audit.record({ targetType: 'KB_TAG', targetId: id, detail: { action: 'update', ...body } });
     return row;
   }
@@ -122,7 +129,7 @@ export class AdminKbController {
   @Patch('tags/:id/enabled')
   @HttpCode(HttpStatus.OK)
   async setTagEnabled(@Param('id') id: string, @Body(new ZodValidationPipe(AdminKbEnabledSchema)) body: AdminKbEnabled) {
-    const res = await this.kb.setTagEnabled(id, body.enabled);
+    const res = await this.taxonomy.setTagEnabled(id, body.enabled);
     await this.audit.record({ targetType: 'KB_TAG', targetId: id, detail: { action: body.enabled ? 'enable' : 'disable' } });
     return res;
   }
@@ -132,13 +139,13 @@ export class AdminKbController {
   @Get('permission/rule')
   @HttpCode(HttpStatus.OK)
   getPermissionRule() {
-    return this.kb.getPermissionRule();
+    return this.perm.getPermissionRule();
   }
 
   @Put('permission/rule')
   @HttpCode(HttpStatus.OK)
   async updatePermissionRule(@Body(new ZodValidationPipe(AdminKbPermissionRuleSchema)) body: AdminKbPermissionRule) {
-    const res = await this.kb.updatePermissionRule(body);
+    const res = await this.perm.updatePermissionRule(body);
     await this.audit.record({ targetType: 'SYS_CONFIG', targetId: 'kb.permission', detail: { action: 'update-rule', ...body } });
     return res;
   }
@@ -151,7 +158,7 @@ export class AdminKbController {
     @Query('page') page?: string,
     @Query('pageSize') pageSize?: string,
   ) {
-    return this.kb.listPermissionItems({
+    return this.perm.listPermissionItems({
       keyword, visibility, page: Number(page) || 1, pageSize: Number(pageSize) || 20,
     });
   }
@@ -162,7 +169,7 @@ export class AdminKbController {
     @Param('id') id: string,
     @Body(new ZodValidationPipe(AdminKbItemVisibilitySchema)) body: AdminKbItemVisibility,
   ) {
-    const res = await this.kb.setItemVisibility(id, body.visibility);
+    const res = await this.perm.setItemVisibility(id, body.visibility);
     await this.audit.record({ targetType: 'KB_DOCUMENT', targetId: id, detail: { action: 'set-visibility', visibility: body.visibility } });
     return res;
   }
@@ -172,14 +179,14 @@ export class AdminKbController {
   @Get('index/stats')
   @HttpCode(HttpStatus.OK)
   indexStats() {
-    return this.kb.indexStats();
+    return this.index.indexStats();
   }
 
   /** 发起索引重建（全量） */
   @Post('index/rebuild')
   @HttpCode(HttpStatus.CREATED)
   async rebuildIndex() {
-    const res = await this.kb.createIndexTask('REBUILD');
+    const res = await this.index.createIndexTask('REBUILD');
     await this.audit.record({ targetType: 'SYS_TASK', targetId: res.id, detail: { action: 'index-rebuild', taskNo: res.taskNo } });
     return res;
   }
@@ -188,7 +195,7 @@ export class AdminKbController {
   @Post('index/increment')
   @HttpCode(HttpStatus.CREATED)
   async incrementIndex(@Body(new ZodValidationPipe(AdminIndexIncrementSchema)) body: AdminIndexIncrement) {
-    const res = await this.kb.createIndexTask('INCREMENT', body.strategy);
+    const res = await this.index.createIndexTask('INCREMENT', body.strategy);
     await this.audit.record({ targetType: 'SYS_TASK', targetId: res.id, detail: { action: 'index-increment', taskNo: res.taskNo, strategy: body.strategy } });
     return res;
   }
@@ -197,7 +204,7 @@ export class AdminKbController {
   @Post('index/clean')
   @HttpCode(HttpStatus.CREATED)
   async cleanIndex() {
-    const res = await this.kb.createIndexTask('CLEAN');
+    const res = await this.index.createIndexTask('CLEAN');
     await this.audit.record({ targetType: 'SYS_TASK', targetId: res.id, detail: { action: 'index-clean', taskNo: res.taskNo } });
     return res;
   }

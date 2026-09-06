@@ -63,6 +63,8 @@ function deps() {
   };
   // 检索优化 C：默认精排回退（返回 null = 沿用 RRF 原序）
   const rerank = { rerank: vi.fn().mockResolvedValue(null) };
+  // SSE 心跳配置（默认 15s；单测内不会推进到心跳周期）
+  const config = { get: (_k: string, d?: number) => d };
   const ctrl = new SearchController(
     search as any,
     intent as any,
@@ -74,6 +76,7 @@ function deps() {
     quota as any,
     metrics as any,
     rateLimit as any,
+    config as any,
   );
   return { ctrl, search, intent, generate, store, cache, rerank, kb, quota, metrics, rateLimit };
 }

@@ -1,8 +1,9 @@
-import { HttpStatus, Injectable, Logger } from '@nestjs/common';
+﻿import { HttpStatus, Injectable, Logger } from '@nestjs/common';
 import type { PayChannel } from '../../../generated/prisma/client';
 import { BizException } from '../../../common/exceptions/biz.exception';
 import { ErrorCode } from '@app/shared';
-import { MemberStoreService } from '../member.store.service';
+import { OrderStoreService } from '../order.store.service';
+import { SubscriptionStoreService } from '../subscription.store.service';
 import { calcPeriodBase, calcPeriodEnd, endOfDay } from '../subscription';
 import { PayChannelRegistry } from './pay-channel';
 import type { NotifyPayload, PayChannelAdapter } from './pay-channel';
@@ -29,7 +30,8 @@ export class PayService {
   private readonly logger = new Logger(PayService.name);
 
   constructor(
-    private readonly store: MemberStoreService,
+    private readonly orderStore: OrderStoreService,
+    private readonly subscriptionStore: SubscriptionStoreService,
     private readonly registry: PayChannelRegistry,
   ) {}
 
@@ -54,21 +56,21 @@ export class PayService {
     const verified = await adapter.verifyNotify(payload);
 
     // 2) 流水号幂等：同一 transactionNo 只入账一次
-    const existed = await this.store.findPaymentByTxn(verified.transactionNo);
+    const existed = await this.orderStore.findPaymentByTxn(verified.transactionNo);
     if (existed) {
       this.logger.log(`回调重复命中（流水已存在）: txn=${verified.transactionNo} status=${existed.status}`);
       return { ok: true, duplicate: true };
     }
 
     // 3) 查订单（系统上下文：回调无登录态，订单号全局唯一）
-    const order = await this.store.getOrderByNoSystem(verified.orderNo);
+    const order = await this.orderStore.getOrderByNoSystem(verified.orderNo);
     if (!order) {
       throw new BizException(ErrorCode.NOT_FOUND, '订单不存在', HttpStatus.NOT_FOUND);
     }
 
     // 4) 金额校验：与下单金额不一致视为异常回调
     if (order.amountCents !== verified.amountCents) {
-      await this.store.createPaymentSystem(order.tenantId, {
+      await this.orderStore.createPaymentSystem(order.tenantId, {
         orderId: order.id,
         orderNo: order.orderNo,
         transactionNo: verified.transactionNo,
@@ -85,7 +87,7 @@ export class PayService {
 
     // 5) 状态机守卫：仅 PENDING 可入账
     if (order.status !== 'PENDING') {
-      await this.store.createPaymentSystem(order.tenantId, {
+      await this.orderStore.createPaymentSystem(order.tenantId, {
         orderId: order.id,
         orderNo: order.orderNo,
         transactionNo: verified.transactionNo,
@@ -99,14 +101,14 @@ export class PayService {
     }
 
     // 6) 计算生效区间：同等级续费在原到期日累加，跨等级/新开从当前时间起算
-    const sub = await this.store.getSubscriptionSystem(order.userId);
+    const sub = await this.subscriptionStore.getSubscriptionSystem(order.userId);
     const now = new Date();
     const snapshot = readLevel(order.planSnapshot);
     const base = calcPeriodBase(sub, snapshot.level, now);
     const periodEnd = endOfDay(calcPeriodEnd(base, snapshot.cycle));
 
     // 7) 事务入账（并发下由 updateMany 守卫，false 表示已被抢先处理）
-    const settled = await this.store.settlePayment({
+    const settled = await this.orderStore.settlePayment({
       order,
       periodStart: base,
       periodEnd,
@@ -135,7 +137,7 @@ export class PayService {
    * 与真实渠道回调走同一 handleNotify 路径。
    */
   async mockPay(orderNo: string, userId: string): Promise<NotifyResult> {
-    const order = await this.store.getOrderByNoSystem(orderNo);
+    const order = await this.orderStore.getOrderByNoSystem(orderNo);
     if (!order) {
       throw new BizException(ErrorCode.NOT_FOUND, '订单不存在', HttpStatus.NOT_FOUND);
     }

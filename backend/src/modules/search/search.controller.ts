@@ -11,6 +11,7 @@ import {
   Req,
   Res,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import type { Response } from 'express';
 import type { AuthenticatedRequest } from '../../common/auth/session-auth.guard';
 import { BizException } from '../../common/exceptions/biz.exception';
@@ -35,6 +36,7 @@ import { RateLimitService } from '../../common/rate-limit/rate-limit.service';
 import { getRequestId } from '../../common/observability/request-context';
 import { getTenantContext } from '../../common/auth/tenant-context';
 import { withSpan } from '../../common/observability/tracer';
+import { startSseHeartbeat } from '../../common/sse/sse-heartbeat.util';
 import {
   serializeSse,
   type SseCondFill,
@@ -99,6 +101,7 @@ export class SearchController {
     private readonly quota: QuotaService,
     private readonly metrics: MetricsService,
     private readonly rateLimit: RateLimitService,
+    private readonly config: ConfigService,
   ) {}
 
   @Get('stream')
@@ -132,6 +135,13 @@ export class SearchController {
     const ac = new AbortController();
     res.on('close', () => ac.abort());
 
+    // SSE 心跳：空闲期定时写注释帧防网关掐断（SSE_HEARTBEAT_MS 可配，<=0 禁用）
+    const stopHeartbeat = startSseHeartbeat(
+      res,
+      ac,
+      this.config.get<number>('SSE_HEARTBEAT_MS', 15_000)!,
+    );
+
     const send = (event: Parameters<typeof serializeSse>[0], data: unknown) =>
       res.write(serializeSse(event, data));
 
@@ -148,6 +158,7 @@ export class SearchController {
         },
       );
     } finally {
+      stopHeartbeat();
       await this.rateLimit.releaseSseSlot(user.userId);
       this.metrics.sseClose(ac.signal.aborted);
       res.end();

@@ -1,6 +1,7 @@
-import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
+﻿import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { getTenantContext } from '../../common/auth/tenant-context';
-import { MemberStoreService } from './member.store.service';
+import { PlanStoreService } from './plan.store.service';
+import { SubscriptionStoreService } from './subscription.store.service';
 import { QuotaService } from './quota.service';
 import { groupPlansByLevel, FREE_TRIAL_LIMIT } from './plans';
 import { calcPeriodBase, calcPeriodEnd, daysLeft, endOfDay, isMemberEffective } from './subscription';
@@ -42,13 +43,14 @@ export class MemberService implements OnModuleInit {
   private readonly logger = new Logger(MemberService.name);
 
   constructor(
-    private readonly store: MemberStoreService,
+    private readonly planStore: PlanStoreService,
+    private readonly subscriptionStore: SubscriptionStoreService,
     private readonly quota: QuotaService,
   ) {}
 
   /** 启动即确保套餐数据存在（幂等 upsert，缺失补齐、不覆盖既有配置） */
   async onModuleInit(): Promise<void> {
-    await this.store.ensureSeedPlans();
+    await this.planStore.ensureSeedPlans();
   }
 
   /** 套餐列表（按等级分组，组内按周期排序） */
@@ -56,7 +58,7 @@ export class MemberService implements OnModuleInit {
     levels: ReturnType<typeof groupPlansByLevel>;
     trialLimit: number;
   }> {
-    const plans = await this.store.listPlans();
+    const plans = await this.planStore.listPlans();
     return { levels: groupPlansByLevel(plans), trialLimit: FREE_TRIAL_LIMIT };
   }
 
@@ -65,7 +67,7 @@ export class MemberService implements OnModuleInit {
    * 会员判定：等级非 FREE 且未过期；到期当日仍有效。
    */
   async getStatus(userId: string): Promise<MemberStatus> {
-    const sub = await this.store.getSubscription(userId);
+    const sub = await this.subscriptionStore.getSubscription(userId);
     const now = new Date();
     const isMember = isMemberEffective(sub, now);
     // 免费体验剩余以 Redis 计数为准（会员/管理员返回 null 表示不限）
@@ -88,7 +90,7 @@ export class MemberService implements OnModuleInit {
 
   /** 连续包月自动续费开关 */
   async setAutoRenew(userId: string, enabled: boolean): Promise<{ autoRenew: boolean }> {
-    const sub = await this.store.setAutoRenew(userId, enabled);
+    const sub = await this.subscriptionStore.setAutoRenew(userId, enabled);
     this.logger.log(`自动续费开关: userId=${userId} enabled=${enabled}`);
     return { autoRenew: sub.autoRenew };
   }
@@ -102,7 +104,7 @@ export class MemberService implements OnModuleInit {
     level: MemberLevel,
     cycle: PlanCycle,
   ): Promise<{ periodStart: Date; periodEnd: Date }> {
-    const sub = await this.store.getSubscription(userId);
+    const sub = await this.subscriptionStore.getSubscription(userId);
     const now = new Date();
     const base = calcPeriodBase(sub, level, now);
     const periodEnd = endOfDay(calcPeriodEnd(base, cycle));

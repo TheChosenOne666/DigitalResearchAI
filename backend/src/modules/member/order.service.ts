@@ -1,9 +1,11 @@
-import { randomInt } from 'node:crypto';
+﻿import { randomInt } from 'node:crypto';
 import { HttpStatus, Injectable, Logger } from '@nestjs/common';
 import { BizException } from '../../common/exceptions/biz.exception';
 import { ErrorCode } from '@app/shared';
 import type { OrderStatus, PayChannel } from '../../generated/prisma/client';
-import { MemberStoreService } from './member.store.service';
+import { PlanStoreService } from './plan.store.service';
+import { OrderStoreService } from './order.store.service';
+import { SubscriptionStoreService } from './subscription.store.service';
 import { isMemberEffective } from './subscription';
 import { CYCLE_NAMES, LEVEL_NAMES } from './plans';
 import { PayChannelRegistry } from './pay/pay-channel';
@@ -68,7 +70,9 @@ export class OrderService {
   private readonly logger = new Logger(OrderService.name);
 
   constructor(
-    private readonly store: MemberStoreService,
+    private readonly planStore: PlanStoreService,
+    private readonly orderStore: OrderStoreService,
+    private readonly subscriptionStore: SubscriptionStoreService,
     private readonly registry: PayChannelRegistry,
   ) {}
 
@@ -80,13 +84,13 @@ export class OrderService {
     userId: string,
     input: { planId: string; channel?: PayChannel },
   ): Promise<OrderView> {
-    const plan = await this.store.getPlan(input.planId);
+    const plan = await this.planStore.getPlan(input.planId);
     if (!plan) {
       throw new BizException(ErrorCode.NOT_FOUND, '套餐不存在或已下架', HttpStatus.NOT_FOUND);
     }
     const channel: PayChannel = input.channel ?? 'MOCK';
     const now = new Date();
-    const order = await this.store.createOrder({
+    const order = await this.orderStore.createOrder({
       userId,
       orderNo: generateOrderNo(now),
       plan,
@@ -108,7 +112,7 @@ export class OrderService {
   ): Promise<{ order: OrderView; payInfo: Record<string, unknown> }> {
     const order = await this.requireOwnOrder(userId, orderNo);
     if (order.status === 'CLOSED' || (order.expireAt && order.expireAt.getTime() < Date.now())) {
-      await this.store.updateOrderStatus(order.id, ['PENDING'], 'CLOSED');
+      await this.orderStore.updateOrderStatus(order.id, ['PENDING'], 'CLOSED');
       throw new BizException(ErrorCode.CONFLICT, '订单已超时关闭，请重新下单', HttpStatus.CONFLICT);
     }
     if (order.status !== 'PENDING') {
@@ -120,8 +124,8 @@ export class OrderService {
       amountCents: order.amountCents,
       subject: readPlanName(order.planSnapshot),
     });
-    await this.store.attachPayInfo(order.id, payChannel, payInfo);
-    const refreshed = await this.store.getOrderByNo(orderNo);
+    await this.orderStore.attachPayInfo(order.id, payChannel, payInfo);
+    const refreshed = await this.orderStore.getOrderByNo(orderNo);
     return { order: toOrderView(refreshed), payInfo };
   }
 
@@ -132,12 +136,12 @@ export class OrderService {
     if (order.status !== 'PENDING') {
       throw new BizException(ErrorCode.CONFLICT, `订单当前状态不可取消：${STATUS_NAMES[order.status]}`, HttpStatus.CONFLICT);
     }
-    const ok = await this.store.updateOrderStatus(order.id, ['PENDING'], 'CANCELLED');
+    const ok = await this.orderStore.updateOrderStatus(order.id, ['PENDING'], 'CANCELLED');
     if (!ok) {
       throw new BizException(ErrorCode.CONFLICT, '订单状态已变更，请刷新后重试', HttpStatus.CONFLICT);
     }
     this.logger.log(`订单已取消: orderNo=${orderNo}`);
-    return toOrderView(await this.store.getOrderByNo(orderNo));
+    return toOrderView(await this.orderStore.getOrderByNo(orderNo));
   }
 
   /** 订单详情（归属校验） */
@@ -151,7 +155,7 @@ export class OrderService {
     query: { status?: string; keyword?: string; from?: Date; page: number; pageSize: number },
   ): Promise<{ list: OrderView[]; total: number; page: number; pageSize: number }> {
     const status = normalizeStatus(query.status);
-    const { list, total } = await this.store.listOrders({
+    const { list, total } = await this.orderStore.listOrders({
       userId,
       ...(status ? { status } : {}),
       ...(query.from ? { from: query.from } : {}),
@@ -169,7 +173,7 @@ export class OrderService {
    */
   async pendingOrder(userId: string): Promise<OrderView | null> {
     await this.renewIfNeeded(userId);
-    const order = await this.store.findPendingOrder(userId);
+    const order = await this.orderStore.findPendingOrder(userId);
     return order ? toOrderView(order) : null;
   }
 
@@ -178,20 +182,20 @@ export class OrderService {
    * 幂等依赖 findPendingOrder 的查重（同一周期内不会重复建单）。
    */
   private async renewIfNeeded(userId: string): Promise<void> {
-    const existing = await this.store.findPendingOrder(userId);
+    const existing = await this.orderStore.findPendingOrder(userId);
     if (existing) return;
-    const sub = await this.store.getSubscription(userId);
+    const sub = await this.subscriptionStore.getSubscription(userId);
     if (!sub || !sub.autoRenew || !sub.cycle || sub.level === 'FREE') return;
     if (isMemberEffective(sub, new Date())) return;
 
-    const plan = await this.store.findPlan(sub.level, sub.cycle);
+    const plan = await this.planStore.findPlan(sub.level, sub.cycle);
     if (!plan) {
       this.logger.warn(`懒续费跳过：未找到套餐 level=${sub.level} cycle=${sub.cycle}`);
       return;
     }
     const now = new Date();
     // 生效区间在支付回调入账时按 calcPeriodBase 计算（下单不锁定到期日）
-    const order = await this.store.createOrder({
+    const order = await this.orderStore.createOrder({
       userId,
       orderNo: generateOrderNo(now),
       plan,
@@ -204,7 +208,7 @@ export class OrderService {
 
   /** 取订单并校验归属（跨用户 → 404，避免信息泄漏） */
   private async requireOwnOrder(userId: string, orderNo: string) {
-    const order = await this.store.getOrderByNo(orderNo);
+    const order = await this.orderStore.getOrderByNo(orderNo);
     if (order.userId !== userId) {
       throw new BizException(ErrorCode.NOT_FOUND, '订单不存在', HttpStatus.NOT_FOUND);
     }

@@ -1,11 +1,11 @@
-import { Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
+﻿import { Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import Redis from 'ioredis';
 import { HttpStatus } from '@nestjs/common';
 import { BizException } from '../../common/exceptions/biz.exception';
 import { RoleCode } from '../../common/auth/roles.decorator';
 import { ErrorCode } from '@app/shared';
-import { MemberStoreService } from './member.store.service';
+import { SubscriptionStoreService } from './subscription.store.service';
 import { FREE_TRIAL_LIMIT } from './plans';
 import { isMemberEffective } from './subscription';
 
@@ -30,7 +30,7 @@ export class QuotaService implements OnModuleDestroy {
 
   constructor(
     config: ConfigService,
-    private readonly store: MemberStoreService,
+    private readonly subscriptionStore: SubscriptionStoreService,
   ) {
     const url = config.get<string>('REDIS_URL', 'redis://localhost:6380');
     this.redis = new Redis(url, { maxRetriesPerRequest: 2 });
@@ -48,7 +48,7 @@ export class QuotaService implements OnModuleDestroy {
 
   /** 是否会员（等级非 FREE 且未过期） */
   async isMember(userId: string): Promise<boolean> {
-    const sub = await this.store.getSubscription(userId);
+    const sub = await this.subscriptionStore.getSubscription(userId);
     return isMemberEffective(sub, new Date());
   }
 
@@ -78,13 +78,13 @@ export class QuotaService implements OnModuleDestroy {
         );
       }
       // 持久化对账（幂等覆盖写，不累加）
-      await this.store.setTrialUsed(userId, used);
+      await this.subscriptionStore.setTrialUsed(userId, used);
       return { allowed: true, trialLeft: Math.max(0, FREE_TRIAL_LIMIT - used) };
     } catch (e) {
       if (e instanceof BizException) throw e;
       // Redis 不可用 → 降级 DB 计数，保证功能可用
       this.logger.warn(`Redis 配额计数失败，降级 DB: userId=${userId} ${(e as Error).message}`);
-      const used = await this.store.getTrialUsed(userId);
+      const used = await this.subscriptionStore.getTrialUsed(userId);
       if (used >= FREE_TRIAL_LIMIT) {
         throw new BizException(
           ErrorCode.QUOTA_EXCEEDED,
@@ -92,7 +92,7 @@ export class QuotaService implements OnModuleDestroy {
           HttpStatus.PAYMENT_REQUIRED,
         );
       }
-      await this.store.setTrialUsed(userId, used + 1);
+      await this.subscriptionStore.setTrialUsed(userId, used + 1);
       return { allowed: true, trialLeft: Math.max(0, FREE_TRIAL_LIMIT - used - 1) };
     }
   }
@@ -103,11 +103,11 @@ export class QuotaService implements OnModuleDestroy {
     if (await this.isMember(userId)) return null;
     try {
       const raw = await this.redis.get(this.key(userId));
-      const used = raw !== null ? Number(raw) : await this.store.getTrialUsed(userId);
+      const used = raw !== null ? Number(raw) : await this.subscriptionStore.getTrialUsed(userId);
       return Math.max(0, FREE_TRIAL_LIMIT - (Number.isFinite(used) ? used : 0));
     } catch (e) {
       this.logger.warn(`Redis 读取配额失败，降级 DB: userId=${userId} ${(e as Error).message}`);
-      const used = await this.store.getTrialUsed(userId);
+      const used = await this.subscriptionStore.getTrialUsed(userId);
       return Math.max(0, FREE_TRIAL_LIMIT - used);
     }
   }

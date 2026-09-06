@@ -1,11 +1,12 @@
 import { describe, it, expect, vi } from 'vitest';
 import { MemberService } from '../src/modules/member/member.service';
-import type { MemberStoreService } from '../src/modules/member/member.store.service';
+import type { PlanStoreService } from '../src/modules/member/plan.store.service';
+import type { SubscriptionStoreService } from '../src/modules/member/subscription.store.service';
 import type { QuotaService } from '../src/modules/member/quota.service';
 import { MEMBER_PLAN_SEEDS } from '../src/modules/member/plans';
 
-/** 构造 store mock（只覆盖被测试方法用到的成员） */
-function makeStore(over: Partial<Record<keyof MemberStoreService, unknown>> = {}) {
+/** 构造套餐 store mock（只覆盖被测试方法用到的成员） */
+function makePlanStore(over: Partial<Record<keyof PlanStoreService, unknown>> = {}) {
   return {
     ensureSeedPlans: vi.fn().mockResolvedValue(MEMBER_PLAN_SEEDS.length),
     listPlans: vi.fn().mockResolvedValue(
@@ -23,11 +24,20 @@ function makeStore(over: Partial<Record<keyof MemberStoreService, unknown>> = {}
         sort: p.sort,
       })),
     ),
+    ...over,
+  } as unknown as PlanStoreService;
+}
+
+/** 构造订阅 store mock */
+function makeSubscriptionStore(
+  over: Partial<Record<keyof SubscriptionStoreService, unknown>> = {},
+) {
+  return {
     getSubscription: vi.fn().mockResolvedValue(null),
     setAutoRenew: vi.fn().mockResolvedValue({ id: 's1', autoRenew: true }),
     setTrialUsed: vi.fn().mockResolvedValue(undefined),
     ...over,
-  } as unknown as MemberStoreService;
+  } as unknown as SubscriptionStoreService;
 }
 
 /** 构造配额服务 mock（trialLeft 默认 1 次） */
@@ -40,17 +50,18 @@ function makeQuota(trialLeft: number | null = 1) {
 
 /** 构造会员服务 */
 function makeService(
-  store: MemberStoreService = makeStore(),
+  planStore: PlanStoreService = makePlanStore(),
+  subscriptionStore: SubscriptionStoreService = makeSubscriptionStore(),
   quota: QuotaService = makeQuota(),
 ): MemberService {
-  return new MemberService(store, quota);
+  return new MemberService(planStore, subscriptionStore, quota);
 }
 
 describe('MemberService.onModuleInit', () => {
   it('启动时幂等同步套餐种子', async () => {
-    const store = makeStore();
-    await makeService(store).onModuleInit();
-    expect(store.ensureSeedPlans).toHaveBeenCalledTimes(1);
+    const planStore = makePlanStore();
+    await makeService(planStore).onModuleInit();
+    expect(planStore.ensureSeedPlans).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -74,18 +85,18 @@ describe('MemberService.getStatus', () => {
   });
 
   it('体验已用完：剩余 0 次', async () => {
-    const st = await makeService(makeStore(), makeQuota(0)).getStatus('u1');
+    const st = await makeService(makePlanStore(), makeSubscriptionStore(), makeQuota(0)).getStatus('u1');
     expect(st.trialLeft).toBe(0);
   });
 
   it('有效会员：返回等级/周期/到期/剩余天数，体验次数不限（null）', async () => {
     const expireAt = new Date(Date.now() + 20 * 86_400_000);
-    const store = makeStore({
+    const subscriptionStore = makeSubscriptionStore({
       getSubscription: vi
         .fn()
         .mockResolvedValue({ id: 's1', level: 'PRO', cycle: 'YEAR', expireAt, autoRenew: true, totalPeriods: 2 }),
     });
-    const st = await makeService(store, makeQuota(null)).getStatus('u1');
+    const st = await makeService(makePlanStore(), subscriptionStore, makeQuota(null)).getStatus('u1');
     expect(st.isMember).toBe(true);
     expect(st.level).toBe('PRO');
     expect(st.levelName).toBe('专业版');
@@ -98,7 +109,7 @@ describe('MemberService.getStatus', () => {
   });
 
   it('已过期会员：降级为非会员，等级回落 FREE', async () => {
-    const store = makeStore({
+    const subscriptionStore = makeSubscriptionStore({
       getSubscription: vi.fn().mockResolvedValue({
         id: 's1',
         level: 'PRO',
@@ -108,7 +119,7 @@ describe('MemberService.getStatus', () => {
         totalPeriods: 1,
       }),
     });
-    const st = await makeService(store).getStatus('u1');
+    const st = await makeService(makePlanStore(), subscriptionStore).getStatus('u1');
     expect(st.isMember).toBe(false);
     expect(st.level).toBe('FREE');
     expect(st.expireAt).toBeNull();
@@ -133,12 +144,12 @@ describe('MemberService.previewPeriod', () => {
 
   it('同等级续费：在原到期日上累加', async () => {
     const expireAt = new Date(Date.now() + 10 * 86_400_000);
-    const store = makeStore({
+    const subscriptionStore = makeSubscriptionStore({
       getSubscription: vi
         .fn()
         .mockResolvedValue({ id: 's1', level: 'PRO', cycle: 'MONTHLY', expireAt, autoRenew: false, totalPeriods: 1 }),
     });
-    const { periodStart, periodEnd } = await makeService(store).previewPeriod('u1', 'PRO', 'MONTHLY');
+    const { periodStart, periodEnd } = await makeService(makePlanStore(), subscriptionStore).previewPeriod('u1', 'PRO', 'MONTHLY');
     expect(periodStart).toEqual(expireAt);
     expect(periodEnd.getTime()).toBeGreaterThan(expireAt.getTime() + 28 * 86_400_000);
   });

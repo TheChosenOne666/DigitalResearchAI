@@ -41,7 +41,7 @@ vi.mock('ioredis', () => ({
 const { QuotaService } = await import('../src/modules/member/quota.service');
 type QuotaServiceType = InstanceType<typeof QuotaService>;
 
-/** 构造服务：store 用 mock，Redis 走内存实现 */
+/** 构造服务：订阅 store 用 mock，Redis 走内存实现 */
 function makeService(opts?: { member?: boolean; dbUsed?: number }) {
   const store = {
     getSubscription: vi.fn().mockResolvedValue(
@@ -61,9 +61,7 @@ function makeService(opts?: { member?: boolean; dbUsed?: number }) {
     setTrialUsed: vi.fn().mockResolvedValue(undefined),
   };
   const config = { get: <T>(_k: string, def: T): T => def } as unknown as ConfigService;
-  const svc = new QuotaService(config, store as never) as QuotaServiceType & {
-    store: { setTrialUsed: ReturnType<typeof vi.fn>; getTrialUsed: ReturnType<typeof vi.fn> };
-  };
+  const svc = new QuotaService(config, store as never) as QuotaServiceType;
   return { svc, store };
 }
 

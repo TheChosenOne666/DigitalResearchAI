@@ -14,6 +14,7 @@ import {
   UseInterceptors,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
+import { ConfigService } from '@nestjs/config';
 import type { Request, Response } from 'express';
 import { BizException } from '../../common/exceptions/biz.exception';
 import { ErrorCode } from '@app/shared';
@@ -22,6 +23,7 @@ import { AnalyzeService } from './analyze.service';
 import { WorkspaceStoreService } from './workspace.store.service';
 import { detectMimeType } from '../kb/parse/doc-parser.service';
 import { serializeSse } from '../search/sse/sse.events';
+import { startSseHeartbeat } from '../../common/sse/sse-heartbeat.util';
 import type { AnalyzeInput } from './analyze';
 
 /** 上传文件最小形状（避免依赖 @types/multer） */
@@ -75,6 +77,7 @@ export class WorkspaceController {
     private readonly workspace: WorkspaceService,
     private readonly analyzeService: AnalyzeService,
     private readonly store: WorkspaceStoreService,
+    private readonly config: ConfigService,
   ) {}
 
   @Get('dataset')
@@ -138,6 +141,14 @@ export class WorkspaceController {
 
     const ac = new AbortController();
     res.on('close', () => ac.abort());
+
+    // SSE 心跳：空闲期定时写注释帧防网关掐断（SSE_HEARTBEAT_MS 可配，<=0 禁用）
+    const stopHeartbeat = startSseHeartbeat(
+      res,
+      ac,
+      this.config.get<number>('SSE_HEARTBEAT_MS', 15_000)!,
+    );
+
     const send = (event: Parameters<typeof serializeSse>[0], data: unknown) =>
       res.write(serializeSse(event, data));
 
@@ -156,6 +167,7 @@ export class WorkspaceController {
     } catch (e) {
       send('error', { message: e instanceof Error ? e.message : 'unknown error' });
     } finally {
+      stopHeartbeat();
       res.end();
     }
   }

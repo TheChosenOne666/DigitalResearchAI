@@ -12,7 +12,8 @@ const queueAdds = vi.hoisted(() => [] as Array<ReturnType<typeof vi.fn>>);
 
 vi.mock('bullmq', () => ({
   Queue: class {
-    add = vi.fn().mockResolvedValue(undefined);
+    /** 默认入队成功（返回带 id 的 job，submitLearnJob 据此判定提交成功） */
+    add = vi.fn().mockResolvedValue({ id: `job-${queueAdds.length + 1}` });
     constructor() {
       queueAdds.push(this.add);
     }
@@ -42,8 +43,9 @@ function makeService(opts?: {
     listPendingReviews: vi.fn().mockResolvedValue({ items: [], total: 0 }),
   };
   const learning = { learn: vi.fn().mockResolvedValue(3), markFailed: vi.fn().mockResolvedValue(undefined) };
+  const learningStore = { getDocumentFile: vi.fn().mockResolvedValue(opts?.fileBytes ?? null) };
   const config = { get: (_k: string) => 'redis://localhost:6380' };
-  const svc = new KbService(store as any, {} as any, learning as any, config as any);
+  const svc = new KbService(store as any, learningStore as any, {} as any, learning as any, config as any);
   return { svc, store, learning };
 }
 
@@ -131,9 +133,10 @@ describe('KbService.approveReview / rejectReview（M3.4 审核）', () => {
     const { svc, learning } = makeService({
       fileBytes: Buffer.from('# 存入文档'),
     });
-    (queueAdds[queueAdds.length - 1] as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
-      new Error('redis down'),
-    );
+    // 队列为懒初始化：先成功提交一次让 Queue 实例就位，再让下一次 add 拒绝
+    await withTenant(() => svc.approveReview('d1'));
+    const lastAdd = queueAdds[queueAdds.length - 1];
+    lastAdd.mockRejectedValueOnce(new Error('redis down'));
     const r = await withTenant(() => svc.approveReview('d1'));
     expect(r).toEqual({ id: 'd1', status: 'LEARNING' });
     expect(learning.learn).toHaveBeenCalledWith(

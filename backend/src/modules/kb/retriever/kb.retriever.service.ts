@@ -4,7 +4,7 @@ import { getTenantContext } from '../../../common/auth/tenant-context';
 import { BizException } from '../../../common/exceptions/biz.exception';
 import type { SearchHit } from '../../search/connectors/connector.interface';
 import { reciprocalRankFusion, type RankedGroup } from '../../search/fusion/rrf';
-import { KbStoreService } from '../store/kb.store.service';
+import { KbRetrievalStoreService } from '../store/kb-retrieval.store.service';
 import { EmbedService } from '../embeddings/embed.service';
 import { QdrantService } from '../vector/qdrant.service';
 
@@ -103,7 +103,7 @@ export class KbRetrieverService {
   private readonly logger = new Logger(KbRetrieverService.name);
 
   constructor(
-    private readonly store: KbStoreService,
+    private readonly store: KbRetrievalStoreService,
     private readonly embed: EmbedService,
     private readonly qdrant: QdrantService,
   ) {}

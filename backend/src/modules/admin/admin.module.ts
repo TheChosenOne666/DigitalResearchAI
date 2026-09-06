@@ -33,7 +33,10 @@ import { AdminMonitorService } from './monitor.service';
 import { AdminBackupController } from './backup.controller';
 import { AdminBackupService, DockerCommandRunner } from './backup.service';
 import { AdminKbController } from './kb-admin.controller';
-import { AdminKbService } from './kb-admin.service';
+import { KbReviewAdminService } from './kb-review.admin.service';
+import { KbTaxonomyAdminService } from './kb-taxonomy.admin.service';
+import { KbPermAdminService } from './kb-perm.admin.service';
+import { KbIndexAdminService } from './kb-index.admin.service';
 import { AdminPayController } from './pay-admin.controller';
 import { AdminPayService } from './pay-admin.service';
 import { KbModule } from '../kb/kb.module';
@@ -87,7 +90,10 @@ import { KbModule } from '../kb/kb.module';
     AdminMonitorService,
     DockerCommandRunner,
     AdminBackupService,
-    AdminKbService,
+    KbReviewAdminService,
+    KbTaxonomyAdminService,
+    KbPermAdminService,
+    KbIndexAdminService,
     AdminPayService,
   ],
   exports: [AdminAuditService],

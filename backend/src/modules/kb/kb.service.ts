@@ -1,5 +1,6 @@
 import { HttpStatus, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import type { Queue } from 'bullmq';
 import { getTenantContext } from '../../common/auth/tenant-context';
 import { BizException } from '../../common/exceptions/biz.exception';
 import { ErrorCode } from '@app/shared';
@@ -10,8 +11,9 @@ import {
 } from './parse/doc-parser.service';
 import { KbLearningService, type LearnDocumentPayload } from './learning/learning.service';
 import { KbStoreService } from './store/kb.store.service';
+import { KbLearningStoreService } from './store/kb-learning.store.service';
 import { buildSourceDocument, type SourceDocInput } from './save/source-doc';
-import { Queue } from 'bullmq';
+import { createLearnQueue, submitLearnJob } from './queue/learn-queue';
 
 /** 数据库存储原文件的最大字节（超出后端不落盘，仅解析学习） */
 export const MAX_UPLOAD_BYTES = 50 * 1024 * 1024;
@@ -24,25 +26,21 @@ export const MAX_UPLOAD_BYTES = 50 * 1024 * 1024;
 @Injectable()
 export class KbService {
   private readonly logger = new Logger(KbService.name);
-  private queue: Queue | null = null;
+  /** 学习队列懒初始化（首次提交时创建；bullmq 不可用为 null，降级同步学习） */
+  private queuePromise: Promise<Queue | null> | null = null;
 
   constructor(
     private readonly store: KbStoreService,
+    private readonly learningStore: KbLearningStoreService,
     private readonly parser: DocParserService,
     private readonly learning: KbLearningService,
-    config: ConfigService,
-  ) {
-    // 懒初始化队列（bullmq 未安装则跳过，依赖注入不失败）
-    try {
-      const url = config.get<string>('REDIS_URL', 'redis://localhost:6380')!;
-      const u = new URL(url);
-      this.queue = new Queue('chunk-embed', {
-        connection: { host: u.hostname, port: Number(u.port || 6379), password: u.password || undefined },
-      });
-    } catch (e) {
-      this.logger.warn(`BullMQ 不可用（${(e as Error).message}），上传将同步学习`);
-      this.queue = null;
-    }
+    private readonly config: ConfigService,
+  ) {}
+
+  /** 获取（或首次创建）学习队列实例 */
+  private getQueue(): Promise<Queue | null> {
+    if (!this.queuePromise) this.queuePromise = createLearnQueue(this.config);
+    return this.queuePromise;
   }
 
   /** 当前请求租户上下文（受保护路由注入） */
@@ -114,12 +112,12 @@ export class KbService {
     return { id: documentId, status: submitted ? 'LEARNING' : 'FAILED' };
   }
 
-  /** 提交学习任务：入队或降级同步执行。返回是否成功提交 */
+  /** 提交学习任务：入队（jobId 幂等去重）或降级同步执行。返回是否成功提交 */
   private async submitLearn(payload: LearnDocumentPayload): Promise<boolean> {
-    if (this.queue) {
+    const queue = await this.getQueue();
+    if (queue) {
       try {
-        await this.queue.add('learn', payload, { attempts: 3, backoff: { type: 'exponential', delay: 2000 } });
-        return true;
+        return await submitLearnJob(queue, payload);
       } catch (e) {
         this.logger.warn(`入队失败，降级同步学习：${(e as Error).message}`);
       }
@@ -196,7 +194,7 @@ export class KbService {
     if (detail.status !== 'PENDING') {
       throw new BizException(ErrorCode.VALIDATION_FAILED, '该文档不在待审核状态', HttpStatus.BAD_REQUEST);
     }
-    const buffer = await this.store.getDocumentFile(tenantId, documentId);
+    const buffer = await this.learningStore.getDocumentFile(tenantId, documentId);
     if (!buffer || buffer.byteLength === 0) {
       await this.learning.markFailed(tenantId, documentId, '原始内容缺失');
       throw new BizException(ErrorCode.VALIDATION_FAILED, '原始内容缺失，无法学习', HttpStatus.BAD_REQUEST);

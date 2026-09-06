@@ -4,7 +4,7 @@ import { DocParserService } from '../parse/doc-parser.service';
 import { chunkText } from '../chunk/chunker';
 import { EmbedService } from '../embeddings/embed.service';
 import { QdrantService } from '../vector/qdrant.service';
-import { KbStoreService } from '../store/kb.store.service';
+import { KbLearningStoreService } from '../store/kb-learning.store.service';
 
 /** 学习任务载荷（队列/上传/重新学习共用） */
 export interface LearnDocumentPayload {
@@ -30,7 +30,7 @@ export class KbLearningService {
     private readonly parser: DocParserService,
     private readonly embed: EmbedService,
     private readonly qdrant: QdrantService,
-    private readonly store: KbStoreService,
+    private readonly store: KbLearningStoreService,
   ) {}
 
   /** 执行一次完整学习；成功返回切片数，失败抛错（由调用方决定置 FAILED 或重试） */

@@ -53,6 +53,9 @@ export const envSchema = z.object({
   RATE_GLOBAL_BURST: posInt.optional(),
   RATE_SSE_MAX_CONCURRENT: posInt.optional(),
 
+  // ── SSE 心跳（中优先级优化：注释帧保活，<=0 禁用） ─────────────
+  SSE_HEARTBEAT_MS: z.coerce.number().optional(),
+
   // ── 备份（M7.4 docker exec pg_dump） ──────────────────────────
   BACKUP_DIR: z.string().optional(),
   BACKUP_PG_CONTAINER: z.string().min(1).optional(),

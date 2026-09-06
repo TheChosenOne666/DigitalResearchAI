@@ -3,7 +3,7 @@ import { getTenantContext } from '../../common/auth/tenant-context';
 import { BizException } from '../../common/exceptions/biz.exception';
 import { ErrorCode } from '@app/shared';
 import { OrderService } from './order.service';
-import { MemberStoreService } from './member.store.service';
+import { OrderStoreService } from './order.store.service';
 
 /** 账单时间范围：全部 / 近 30 天 / 近 90 天 */
 const RANGE_DAYS: Record<string, number> = { '30d': 30, '90d': 90 };
@@ -15,7 +15,7 @@ const RANGE_DAYS: Record<string, number> = { '30d': 30, '90d': 90 };
 export class BillingController {
   constructor(
     private readonly orders: OrderService,
-    private readonly store: MemberStoreService,
+    private readonly store: OrderStoreService,
   ) {}
 
   /** 当前用户 ID（受保护路由由全局守卫保证登录态） */
