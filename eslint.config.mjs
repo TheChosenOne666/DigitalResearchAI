@@ -13,6 +13,8 @@ export default tseslint.config(
       '**/*.d.ts',
       // UI 设计原型目录（非工程代码，不入 lint）
       'AI数智研究平台原型/**',
+      // 历史依赖备份目录（含 vite 预构建产物，非工程代码，不入 lint）
+      '**/node_modules_bak0902/**',
       // Prisma 生成产物（prisma generate 输出，不入 lint）
       '**/generated/**',
     ],
