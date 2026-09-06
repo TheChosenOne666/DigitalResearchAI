@@ -1,6 +1,7 @@
 import { Module, type MiddlewareConsumer, type NestModule } from '@nestjs/common';
 import { APP_FILTER, APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
 import { ConfigModule } from '@nestjs/config';
+import { validateEnv } from './common/config/env.schema';
 import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
 import { TransformInterceptor } from './common/interceptors/transform.interceptor';
 import { ObservabilityModule } from './common/observability/observability.module';
@@ -29,7 +30,8 @@ import { TenantContextInterceptor } from './common/auth/tenant-context.intercept
  */
 @Module({
   imports: [
-    ConfigModule.forRoot({ isGlobal: true }),
+    // 环境变量启动校验（fail-fast）：缺必填项/类型非法时进程启动即失败
+    ConfigModule.forRoot({ isGlobal: true, validate: validateEnv }),
     ObservabilityModule,
     RateLimitModule,
     HealthModule,
