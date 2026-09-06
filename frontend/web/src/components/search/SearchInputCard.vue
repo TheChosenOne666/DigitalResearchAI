@@ -2,6 +2,7 @@
 import { ElMessage } from 'element-plus';
 import type { SearchMode } from '@/api/search';
 import type { SearchCondState } from './search-meta';
+import { COUNTRY_OPTIONS, INDICATOR_OPTIONS } from './search-meta';
 
 /** 智搜输入卡（对齐原型 ss-box）：输入行 + 筛选行；检索/中止动作通过事件交父组件编排 */
 
@@ -92,6 +93,7 @@ function resetCond(): void {
         placeholder="国家 / 地区"
         title="国家 / 地区（AI 自动识别，可手动修改）"
       >
+        <el-option v-for="c in COUNTRY_OPTIONS" :key="c" :label="c" :value="c" />
       </el-select>
       <el-select
         v-model="cond.indicators"
@@ -105,6 +107,7 @@ function resetCond(): void {
         placeholder="统计指标"
         title="统计指标（AI 自动识别，可手动修改）"
       >
+        <el-option v-for="i in INDICATOR_OPTIONS" :key="i" :label="i" :value="i" />
       </el-select>
       <el-input-number
         v-model="cond.yearFrom"
