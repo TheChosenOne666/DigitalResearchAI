@@ -639,22 +639,26 @@ export class KbStoreService {
   > {
     const { tenantId, patterns, limit } = params;
     if (!patterns.length) return [];
+    // 检索优化（优化 A）：ILIKE 对 unnest 变量 pattern 无法在计划期提取 trigram，
+    // trigram GIN 索引永远不可用；改为 OR 展开的参数化 ILIKE（Prisma.join 组合，
+    // 参数逐个绑定防注入），配合 pg_trgm 索引消除全表扫描
+    const conds = Prisma.join(
+      patterns.map((p) => Prisma.sql`c.content ILIKE ${p}`),
+      ' OR ',
+    );
+    const matchedSum = Prisma.join(
+      patterns.map((p) => Prisma.sql`(CASE WHEN c.content ILIKE ${p} THEN 1 ELSE 0 END)`),
+      ' + ',
+    );
     const rows = await this.prisma.$queryRaw<Record<string, unknown>[]>`
       SELECT c.id, c.library_id AS "libraryId", c.group_id AS "groupId",
              c.document_id AS "documentId", c."index", c.content,
              d.name AS "documentName",
-             (
-               SELECT count(*)
-               FROM unnest(${patterns}::text[]) AS p(pat)
-               WHERE c.content ILIKE p.pat
-             ) AS "matchedTerms"
+             (${matchedSum}) AS "matchedTerms"
       FROM kb_chunks c
       JOIN kb_documents d ON d.id = c.document_id
       WHERE c.tenant_id = ${tenantId}
-        AND EXISTS (
-          SELECT 1 FROM unnest(${patterns}::text[]) AS p(pat)
-          WHERE c.content ILIKE p.pat
-        )
+        AND (${conds})
       ORDER BY "matchedTerms" DESC, c.created_at ASC, c."index" ASC
       LIMIT ${limit}
     `;

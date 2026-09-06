@@ -56,17 +56,26 @@ function deps() {
     acquireSseSlot: vi.fn().mockResolvedValue(undefined),
     releaseSseSlot: vi.fn().mockResolvedValue(undefined),
   };
+  // 检索优化 B：默认缓存未命中（走真实检索路径）
+  const cache = {
+    get: vi.fn().mockResolvedValue(null),
+    set: vi.fn().mockResolvedValue(undefined),
+  };
+  // 检索优化 C：默认精排回退（返回 null = 沿用 RRF 原序）
+  const rerank = { rerank: vi.fn().mockResolvedValue(null) };
   const ctrl = new SearchController(
     search as any,
     intent as any,
     generate as any,
     store as any,
+    cache as any,
+    rerank as any,
     kb as any,
     quota as any,
     metrics as any,
     rateLimit as any,
   );
-  return { ctrl, search, intent, generate, store, kb, quota, metrics, rateLimit };
+  return { ctrl, search, intent, generate, store, cache, rerank, kb, quota, metrics, rateLimit };
 }
 
 describe('SearchController.stream', () => {
@@ -160,6 +169,96 @@ describe('SearchController.stream', () => {
     expect(store.saveReport).not.toHaveBeenCalled();
     expect(store.upsertUsage).not.toHaveBeenCalled();
     expect(f.joined()).toContain('event: done');
+  });
+
+  it('检索优化 B 缓存命中：跳过真实检索，来源卡照常推送且不回写缓存', async () => {
+    const { ctrl, search, intent, generate, store, cache } = deps();
+    intent.classify.mockResolvedValue({});
+    const cached = {
+      cited: [hit('缓存命中A', 'local', 'kb://lib/d/0')],
+      referenced: [],
+      ranked: [],
+    };
+    cache.get.mockResolvedValue(cached);
+    generate.stream.mockImplementation(async (_r: unknown, _s: unknown, onChunk: (c: any) => void) => {
+      onChunk({ text: '缓存报告', citations: [] });
+      return { fullText: '缓存报告', tokenUsage: 1, citations: [] };
+    });
+    store.createSession.mockResolvedValue({ id: 's1' });
+    store.saveReport.mockResolvedValue({ id: 'r1' });
+
+    const f = fakeRes();
+    await ctrl.stream(req(), f.res, '重复问题', 'hybrid', undefined);
+
+    expect(search.search).not.toHaveBeenCalled(); // 未真实检索
+    expect(cache.set).not.toHaveBeenCalled(); // 命中不回写
+    expect(f.joined()).toContain('"title":"缓存命中A"'); // 来源卡照常
+    expect(f.joined()).toContain('event: done');
+  });
+
+  it('检索优化 B 缓存未命中：真实检索后回写（fire-and-forget）', async () => {
+    const { ctrl, search, intent, generate, store, cache } = deps();
+    intent.classify.mockResolvedValue({});
+    const fresh = { cited: [hit('新结果', 'web', 'https://x')], referenced: [], ranked: [] };
+    search.search.mockResolvedValue(fresh);
+    generate.stream.mockResolvedValue({ fullText: 'r', tokenUsage: 0, citations: [] });
+    store.createSession.mockResolvedValue({ id: 's1' });
+    store.saveReport.mockResolvedValue({ id: 'r1' });
+
+    const f = fakeRes();
+    await ctrl.stream(req(), f.res, '新问题', 'hybrid', undefined);
+
+    expect(search.search).toHaveBeenCalledTimes(1);
+    // 单测无租户 ALS 上下文，缓存键回退 userId 维度
+    expect(cache.set).toHaveBeenCalledWith('u1', 'hybrid', '新问题', expect.any(Object), fresh);
+  });
+
+  it('检索优化 C 精排生效：候选整体重排后按原引用级门槛重新切分，并随缓存保存', async () => {
+    const { ctrl, search, intent, generate, store, cache, rerank } = deps();
+    intent.classify.mockResolvedValue({});
+    const a = hit('原引用1', 'web', 'https://a');
+    const b = hit('原引用2', 'web', 'https://b');
+    const c = hit('原参考1', 'web', 'https://c');
+    search.search.mockResolvedValue({ cited: [a, b], referenced: [c], ranked: [] });
+    // 精排把参考级 c 提到最前
+    rerank.rerank.mockResolvedValue([c, a, b]);
+    generate.stream.mockResolvedValue({ fullText: 'r', tokenUsage: 0, citations: [] });
+    store.createSession.mockResolvedValue({ id: 's1' });
+    store.saveReport.mockResolvedValue({ id: 'r1' });
+
+    const f = fakeRes();
+    await ctrl.stream(req(), f.res, 'q', 'hybrid', undefined);
+
+    const out = f.joined();
+    // 来源卡顺序 = 精排后顺序，首条（原参考级）现成为引用级
+    const firstIdx = out.indexOf('"title":"原参考1"');
+    expect(firstIdx).toBeGreaterThanOrEqual(0);
+    expect(out.indexOf('"isCited":true', firstIdx)).toBeGreaterThan(0);
+    // 精排后的顺序随缓存保存
+    expect(cache.set).toHaveBeenCalledWith('u1', 'hybrid', 'q', expect.any(Object), {
+      cited: [c, a],
+      referenced: [b],
+      ranked: [],
+    });
+  });
+
+  it('检索优化 C 精排失败：回退 RRF 原序不阻断管道', async () => {
+    const { ctrl, search, intent, generate, store, rerank } = deps();
+    intent.classify.mockResolvedValue({});
+    const a = hit('A', 'web', 'https://a');
+    const b = hit('B', 'web', 'https://b');
+    search.search.mockResolvedValue({ cited: [a, b], referenced: [], ranked: [] });
+    // 服务契约：内部捕获一切失败并返回 null（回退原序），不会 reject
+    rerank.rerank.mockResolvedValue(null);
+    generate.stream.mockResolvedValue({ fullText: 'r', tokenUsage: 0, citations: [] });
+    store.createSession.mockResolvedValue({ id: 's1' });
+    store.saveReport.mockResolvedValue({ id: 'r1' });
+
+    const f = fakeRes();
+    await ctrl.stream(req(), f.res, 'q', 'hybrid', undefined);
+    // 原序推送且正常完成
+    expect(f.joined()).toContain('event: done');
+    expect(f.joined()).toContain('"title":"A"');
   });
 
   it('检索失败时推送 error（含阶段）', async () => {

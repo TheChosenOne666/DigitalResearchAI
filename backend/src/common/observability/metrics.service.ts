@@ -93,8 +93,8 @@ export class MetricsService implements OnModuleInit, OnModuleDestroy {
     if (aborted) this.sseDisconnects.inc();
   }
 
-  /** 记录一次 LLM 调用结果 */
-  llmCall(scene: 'intent' | 'report' | 'analyze', status: 'ok' | 'error'): void {
+  /** 记录一次 LLM 调用结果（rerank 增加 skipped：未启用/候选不足跳过） */
+  llmCall(scene: 'intent' | 'report' | 'analyze' | 'rerank', status: 'ok' | 'error' | 'skipped'): void {
     this.llmCalls.labels(scene, status).inc();
   }
 

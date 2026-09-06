@@ -10,6 +10,8 @@ import { WebAnySearchConnector } from './connectors/web.connector';
 import { IntentService } from './intent/intent.service';
 import { GenerateService } from './generate/generate.service';
 import { SearchStoreService } from './persistence/search.store.service';
+import { SearchCacheService } from './search-cache.service';
+import { RerankService } from './fusion/rerank.service';
 
 /**
  * 智搜模块（M2 核心管道）。
@@ -28,6 +30,8 @@ import { SearchStoreService } from './persistence/search.store.service';
     IntentService,
     GenerateService,
     SearchStoreService,
+    SearchCacheService,
+    RerankService,
     {
       provide: SEARCH_CONNECTORS,
       useFactory: (

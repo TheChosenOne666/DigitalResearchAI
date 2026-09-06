@@ -4,6 +4,7 @@ import {
   Get,
   HttpCode,
   HttpStatus,
+  Logger,
   Param,
   Post,
   Query,
@@ -25,11 +26,14 @@ import { SearchService } from './search.service';
 import { IntentService } from './intent/intent.service';
 import { GenerateService } from './generate/generate.service';
 import { SearchStoreService } from './persistence/search.store.service';
+import { SearchCacheService } from './search-cache.service';
+import { RerankService } from './fusion/rerank.service';
 import { KbService } from '../kb/kb.service';
 import { QuotaService } from '../member/quota.service';
 import { MetricsService } from '../../common/observability/metrics.service';
 import { RateLimitService } from '../../common/rate-limit/rate-limit.service';
 import { getRequestId } from '../../common/observability/request-context';
+import { getTenantContext } from '../../common/auth/tenant-context';
 import { withSpan } from '../../common/observability/tracer';
 import {
   serializeSse,
@@ -82,11 +86,15 @@ export interface SaveToKbBody {
  */
 @Controller('search')
 export class SearchController {
+  private readonly logger = new Logger(SearchController.name);
+
   constructor(
     private readonly search: SearchService,
     private readonly intent: IntentService,
     private readonly generate: GenerateService,
     private readonly store: SearchStoreService,
+    private readonly cache: SearchCacheService,
+    private readonly rerank: RerankService,
     private readonly kb: KbService,
     private readonly quota: QuotaService,
     private readonly metrics: MetricsService,
@@ -171,11 +179,28 @@ export class SearchController {
       const session = await this.store.createSession(user.userId, question, mode, conditions);
       send('cond_fill', { conditions } satisfies SseCondFill);
 
-      // 检索 + 融合（按模式路由检索路）
+      // 检索 + 融合（按模式路由检索路）；检索优化 B：先查短缓存（租户/模式/问题/条件隔离），
+      // 命中跳过外部检索（省 AnySearch/embedding 调用），未命中真实检索后回写（fire-and-forget）
       stage = 'searching';
       send('stage', { stage, msg: '检索中' } satisfies SseStage);
       const input: ConnectorInput = { question, conditions };
-      const result = await this.search.search(input, ac.signal, undefined, ROUTES_BY_MODE[mode]);
+      const tenantId = getTenantContext()?.tenantId ?? user.userId;
+      let result = await this.cache.get(tenantId, mode, question, conditions);
+      if (result) {
+        this.logger.debug(`检索缓存命中: mode=${mode} q=${question.slice(0, 20)}`);
+      } else {
+        let fresh = await this.search.search(input, ac.signal, undefined, ROUTES_BY_MODE[mode]);
+        // 检索优化 C：融合后 TopK 做 LLM listwise 精排（引用级门槛内重排；
+        // 未启用/超时/解析失败回退 RRF 原序），精排后的顺序随缓存一并保存
+        const topHits = [...fresh.cited, ...fresh.referenced];
+        const reranked = await this.rerank.rerank(question, topHits, ac.signal);
+        if (reranked) {
+          const citeCount = fresh.cited.length;
+          fresh = { ...fresh, cited: reranked.slice(0, citeCount), referenced: reranked.slice(citeCount) };
+        }
+        result = fresh;
+        void this.cache.set(tenantId, mode, question, conditions, result);
+      }
 
       // 搜索词统计（A-10）：每次检索累计频次，无结果时累计 emptyCount（平台级公共表）
       await this.store.trackSearchTerm(question, result.cited.length + result.referenced.length === 0);
