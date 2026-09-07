@@ -36,10 +36,10 @@ function renderInline(s: string, maxCite?: number): string {
     .replace(/(^|[^*])\*([^*\n]+)\*(?![^*])/g, '$1<em>$2</em>');
   out = out.replace(/\{c:(\d+)\}/g, (_, n: string) => {
     const num = Number(n);
-    // 报告内引文按 1 起编号，来源卡 idx 从 0 起：data-idx 存 N-1 供联动，展示仍用 [N]
+    // 报告内引文 {c:N} 与来源卡 idx 均为 1 起编号，data-idx 直接存 N 供联动，展示用 [N]
     // 越界编号（LLM 幻觉引文）退化为纯文本，不渲染可点角标
     if (maxCite != null && num > maxCite) return `[${num}]`;
-    return `<sup class="cite" data-idx="${num - 1}">[${num}]</sup>`;
+    return `<sup class="cite" data-idx="${num}">[${num}]</sup>`;
   });
   return out;
 }

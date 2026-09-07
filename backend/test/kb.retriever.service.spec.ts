@@ -142,6 +142,36 @@ describe('KbRetrieverService.search 混合检索', () => {
     );
   });
 
+  it('全文路低于最低相似度阈值的低相关命中被剔除（仅命中年份）', async () => {
+    const { svc } = makeRetriever({
+      libs: [{ id: 'lib1', topK: 10, threshold: 0.4, weight: 1.2 }],
+      fulltextRows: [
+        {
+          chunkId: 'ck1',
+          libraryId: 'lib1',
+          groupId: null,
+          documentId: 'd1',
+          index: 0,
+          content: '后端新员工入职指南（2023 修订版）',
+          documentName: '后端新员工入职指南.docx',
+          matchedTerms: 1, // 仅命中 '2023'：3 词占比 1/3 ≈ 0.33 < 0.4 → 剔除
+        },
+        {
+          chunkId: 'ck2',
+          libraryId: 'lib1',
+          groupId: null,
+          documentId: 'd2',
+          index: 0,
+          content: '美国 2023 年 GDP 数据',
+          documentName: '美国GDP报告.md',
+          matchedTerms: 3, // 命中全部 3 词 → 保留
+        },
+      ],
+    });
+    const hits = await withTenant(() => svc.search('美国2023年GDP'));
+    expect(hits.map((h) => h.title)).toEqual(['美国GDP报告.md']);
+  });
+
   it('多库全文命中按库权重排序（高权优先）', async () => {
     const row = (lib: string, doc: string, name: string) => ({
       chunkId: `ck_${doc}`,

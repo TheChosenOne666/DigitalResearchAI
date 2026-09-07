@@ -218,7 +218,7 @@ export class SearchController {
 
       // 按 idx 连续编号推送来源卡，并收集（引用级进上下文，参考级仅展示）
       const sources: Array<{ hit: SearchHit; idx: number; isCited: boolean }> = [];
-      let idx = 0;
+      let idx = 1;
       for (const hit of result.cited) {
         send('source', {
           idx,
@@ -311,7 +311,7 @@ export class SearchController {
     @Body() body: SaveToKbBody,
   ): Promise<unknown> {
     const idxs = Array.isArray(body?.idxs)
-      ? [...new Set(body.idxs.map(Number).filter((n) => Number.isInteger(n) && n >= 0))]
+      ? [...new Set(body.idxs.map(Number).filter((n) => Number.isInteger(n) && n >= 1))]
       : [];
     if (!idxs.length) {
       throw new BizException(ErrorCode.VALIDATION_FAILED, '请先勾选要存入的来源', HttpStatus.BAD_REQUEST);

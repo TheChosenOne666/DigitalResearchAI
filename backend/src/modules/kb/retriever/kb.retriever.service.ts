@@ -64,6 +64,12 @@ export type RecallGrade = 'HIGH' | 'MID' | 'LOW';
 export const RECALL_GRADE_HIGH = 0.7;
 export const RECALL_GRADE_MID = 0.4;
 
+/** 全文路最低相似度阈值（=RECALL_GRADE_MID）：低于该值视为 LOW 档低相关命中，检索期直接剔除。
+ * 无向量路（无 ARK_API_KEY 退化纯全文）时，全文相似度 = 命中词数 / 提取词总数，
+ * 「仅命中年份/单个通用词」的切片（如搜「美国2023年GDP」召回只含 2023 的入职指南）占比过低，
+ * 会污染本地检索结果，故统一拦截 LOW 档命中；MID/HIGH 档仍可正常出结果。 */
+export const FULLTEXT_MIN_SIMILARITY = RECALL_GRADE_MID;
+
 /** 按相似度打分档（纯函数，供召回测试与单测复用） */
 export function gradeSimilarity(score: number): RecallGrade {
   if (score >= RECALL_GRADE_HIGH) return 'HIGH';
@@ -93,7 +99,8 @@ interface InternalChunk {
  * 打分语义：
  * - 向量相似度 = Qdrant cosine（0~1 钳制）；低于库 threshold 的向量命中在检索期剔除；
  * - 全文相似度 = 命中关键词数 / 提取关键词总数——子串匹配无真实语义距离，
- *   不设库阈值过滤，仅用于排序与分级展示（无 ARK_API_KEY 退化模式下保证全文路可出结果）；
+ *   设 FULLTEXT_MIN_SIMILARITY（=RECALL_GRADE_MID）最低阈值，剔除 LOW 档低相关命中，
+ *   避免「仅命中年份/单个通用词」的切片污染结果（无 ARK 退化模式下仍可出 MID/HIGH 档结果）；
  * - 同一切片多渠道命中时取各渠道最高相似度作为 rawScore；
  * - RRF 组权重 = 所在库的检索权重（kb_libraries.weight），叠加管道层的本地路整体加权，
  *   实现「本地优先」下的库间差异。
@@ -237,10 +244,12 @@ export class KbRetrieverService {
         patterns: terms.map(toIlikePattern),
         limit: FULLTEXT_CANDIDATE_LIMIT,
       });
-      return rows.map((row) => ({
-        ...row,
-        similarity: row.matchedTerms / terms.length,
-      }));
+      return rows
+        .map((row) => ({
+          ...row,
+          similarity: row.matchedTerms / terms.length,
+        }))
+        .filter((c) => c.similarity >= FULLTEXT_MIN_SIMILARITY);
     } catch (e) {
       this.logger.warn(`PG 全文检索失败：${(e as Error).message}`);
       return [];

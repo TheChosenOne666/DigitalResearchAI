@@ -34,8 +34,12 @@ const emit = defineEmits<{
   'cite-click': [idx: number];
 }>();
 
-/** 当前阶段序号 */
-const stageIndex = computed(() => Math.max(0, STAGES.findIndex((s) => s.key === props.stage)));
+/** 当前阶段序号；done 视为全部完成（返回 STAGES.length，使全部节点进入 done 态、无 active） */
+const stageIndex = computed(() =>
+  props.stage === 'done'
+    ? STAGES.length
+    : Math.max(0, STAGES.findIndex((s) => s.key === props.stage)),
+);
 const isGenerating = computed(() => props.stage === 'generating' && props.running);
 </script>
 

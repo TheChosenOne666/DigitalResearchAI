@@ -336,8 +336,8 @@ describe('SearchController.saveToKb（M3.4 入库链路）', () => {
     tokenUsage: 8,
     createdAt: new Date(),
     sources: [
-      { idx: 0, title: '来源A', url: 'https://a', snippet: '摘A', sourceType: 'web', isCited: true },
-      { idx: 1, title: '来源B', url: null, snippet: '摘B', sourceType: 'vertical', isCited: false },
+      { idx: 1, title: '来源A', url: 'https://a', snippet: '摘A', sourceType: 'web', isCited: true },
+      { idx: 2, title: '来源B', url: null, snippet: '摘B', sourceType: 'vertical', isCited: false },
     ],
   };
 
@@ -347,7 +347,7 @@ describe('SearchController.saveToKb（M3.4 入库链路）', () => {
     kb.saveSourcesToLibrary.mockResolvedValue({ created: 1, documents: [{ id: 'kd1', name: '来源A.md' }] });
 
     const r = await ctrl.saveToKb('s1', {
-      idxs: [0],
+      idxs: [1],
       libraryId: 'lib1',
       groupId: null,
       visibility: 'PUBLIC',
@@ -362,7 +362,7 @@ describe('SearchController.saveToKb（M3.4 入库链路）', () => {
         tags: ['宏观', 'GDP'],
         sessionId: 's1',
         question: '美国 GDP',
-        sources: [{ idx: 0, title: '来源A', url: 'https://a', snippet: '摘A', sourceType: 'web' }],
+        sources: [{ idx: 1, title: '来源A', url: 'https://a', snippet: '摘A', sourceType: 'web' }],
       }),
     );
     expect(r).toEqual({ created: 1, documents: [{ id: 'kd1', name: '来源A.md' }] });
@@ -378,12 +378,12 @@ describe('SearchController.saveToKb（M3.4 入库链路）', () => {
 
   it('缺目标库 / 报告不存在 / 来源序号不匹配分别报错', async () => {
     const { ctrl, store, kb } = deps();
-    await expect(ctrl.saveToKb('s1', { idxs: [0] })).rejects.toThrow(/目标知识库/);
+    await expect(ctrl.saveToKb('s1', { idxs: [1] })).rejects.toThrow(/目标知识库/);
     // 报告不存在：store 层抛 404 业务异常
     store.reportDetail.mockRejectedValue(new BizException(ErrorCode.NOT_FOUND, '报告不存在', 404));
-    await expect(ctrl.saveToKb('s1', { idxs: [0], libraryId: 'lib1' })).rejects.toThrow(/报告不存在/);
+    await expect(ctrl.saveToKb('s1', { idxs: [1], libraryId: 'lib1' })).rejects.toThrow(/报告不存在/);
     store.reportDetail.mockResolvedValue(reportDetailStub);
-    await expect(ctrl.saveToKb('s1', { idxs: [9], libraryId: 'lib1' })).rejects.toThrow(
+    await expect(ctrl.saveToKb('s1', { idxs: [99], libraryId: 'lib1' })).rejects.toThrow(
       /所选来源不存在/,
     );
     expect(store.reportDetail).toHaveBeenCalledTimes(2);
