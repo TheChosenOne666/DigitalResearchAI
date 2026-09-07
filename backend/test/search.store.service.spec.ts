@@ -14,6 +14,7 @@ function mockPrisma() {
     update: vi.fn(),
     findMany: vi.fn(),
     findFirst: vi.fn(),
+    count: vi.fn(),
   };
   const usage = { upsert: vi.fn() };
   return {
@@ -81,7 +82,7 @@ describe('SearchStoreService.saveReport', () => {
 });
 
 describe('SearchStoreService.listSessions / reportDetail', () => {
-  it('listSessions 映射最新报告', async () => {
+  it('listSessions 映射最新报告并返回真实总数', async () => {
     const m = mockPrisma();
     m._session.findMany.mockResolvedValue([
       {
@@ -93,9 +94,12 @@ describe('SearchStoreService.listSessions / reportDetail', () => {
         reports: [{ id: 'r9', createdAt: new Date() }],
       },
     ]);
+    m._session.count.mockResolvedValue(25);
     const svc = new SearchStoreService(m as any);
-    const items = await svc.listSessions('u1', 1, 10);
+    const { items, total } = await svc.listSessions('u1', 1, 10);
     expect(items[0].reportId).toBe('r9');
+    expect(total).toBe(25);
+    expect(m._session.count).toHaveBeenCalledWith({ where: { userId: 'u1' } });
     expect(m._session.findMany).toHaveBeenCalled();
   });
 

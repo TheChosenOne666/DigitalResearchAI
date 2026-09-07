@@ -7,6 +7,9 @@ import type { SearchConditions } from '../connectors/connector.interface';
 import { MetricsService } from '../../../common/observability/metrics.service';
 import { withSpan } from '../../../common/observability/tracer';
 
+/** 意图分类超时（毫秒）：超时放弃回填（空条件直走检索），不阻塞整条管道；与 rerank 熔断策略一致 */
+const INTENT_TIMEOUT_MS = 5_000;
+
 /**
  * 意图分类服务（M2.2）：调用方舟 DeepSeek（OpenAI 兼容协议）做结构化抽取，
  * 把用户问题转成检索条件（国家/指标/年份/检索倾向）。失败或无 Key 降级为「跳过回填」。
@@ -52,6 +55,8 @@ export class IntentService {
       return {};
     }
     try {
+      // 客户端断开或超时任一触发即取消；超时降级为空条件（原问题直走检索），LLM 挂起不拖死管道
+      const linked = AbortSignal.any([signal, AbortSignal.timeout(INTENT_TIMEOUT_MS)]);
       const { object } = await withSpan('search.intent', { 'search.question_len': question.length }, async () =>
         generateObject({
           model: this.client,
@@ -65,7 +70,7 @@ export class IntentService {
             '- routeHints：倾向走的检索路；vertical=垂直数据库(如世界银行)、web=联网搜索、local=知识库；无法判断则空数组\n' +
             '只输出符合 schema 的 JSON，不要任何解释文字。',
           prompt: question,
-          abortSignal: signal,
+          abortSignal: linked,
         }),
       );
       this.metrics.llmCall('intent', 'ok');

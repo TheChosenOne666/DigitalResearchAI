@@ -97,6 +97,27 @@ export class QuotaService implements OnModuleDestroy {
     }
   }
 
+  /**
+   * 回滚一次免费体验配额（检索管道失败时由智搜入口调用）。
+   * 会员/管理端角色本就不计数，直接跳过；Redis DECR 为主（下限钳 0），
+   * DB 对账同步覆盖写；Redis 不可用降级 DB 递减。失败由调用方兜底告警。
+   */
+  async rollbackTrial(userId: string, roles: string[]): Promise<void> {
+    if (roles?.includes(RoleCode.PLATFORM_ADMIN) || roles?.includes(RoleCode.DATA_ADMIN)) return;
+    if (await this.isMember(userId)) return;
+    const key = this.key(userId);
+    try {
+      const used = await this.redis.decr(key);
+      const reverted = Math.max(0, used);
+      if (used < 0) await this.redis.set(key, '0');
+      await this.subscriptionStore.setTrialUsed(userId, reverted);
+    } catch (e) {
+      this.logger.warn(`Redis 配额回滚失败，降级 DB: userId=${userId} ${(e as Error).message}`);
+      const used = await this.subscriptionStore.getTrialUsed(userId);
+      await this.subscriptionStore.setTrialUsed(userId, Math.max(0, used - 1));
+    }
+  }
+
   /** 查询剩余免费次数（不消耗）：会员/管理员返回 null 表示不限 */
   async trialLeft(userId: string, roles: string[] = []): Promise<number | null> {
     if (roles.includes(RoleCode.PLATFORM_ADMIN) || roles.includes(RoleCode.DATA_ADMIN)) return null;

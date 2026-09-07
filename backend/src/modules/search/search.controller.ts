@@ -15,10 +15,10 @@ import { ConfigService } from '@nestjs/config';
 import type { Response } from 'express';
 import type { AuthenticatedRequest } from '../../common/auth/session-auth.guard';
 import { BizException } from '../../common/exceptions/biz.exception';
-import { ErrorCode } from '@app/shared';
+import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe';
+import { ErrorCode, SearchStreamSchema, type SearchStreamBody } from '@app/shared';
 import type {
   ConnectorInput,
-  SearchConditions,
   SearchHit,
   SearchMode,
   SourceType,
@@ -59,17 +59,6 @@ const ROUTES_BY_MODE: Record<SearchMode, ReadonlySet<SourceType>> = {
   local: new Set<SourceType>(['local']),
 };
 
-/** 安全解析 conditions JSON（失败回退空对象，不阻断管道） */
-function parseConditions(raw?: string): SearchConditions {
-  if (!raw) return {};
-  try {
-    const obj = JSON.parse(raw);
-    return obj && typeof obj === 'object' ? (obj as SearchConditions) : {};
-  } catch {
-    return {};
-  }
-}
-
 /** 智搜来源存入知识库入参 */
 export interface SaveToKbBody {
   /** 勾选来源的序号（即报告内 idx，与 SSE 来源卡编号一致） */
@@ -104,14 +93,14 @@ export class SearchController {
     private readonly config: ConfigService,
   ) {}
 
-  @Get('stream')
+  @Post('stream')
+  @HttpCode(200)
   async stream(
     @Req() req: AuthenticatedRequest,
     @Res() res: Response,
-    @Query('question') question = '',
-    @Query('mode') mode: SearchMode = 'hybrid',
-    @Query('conditions') conditionsJson?: string,
+    @Body(new ZodValidationPipe(SearchStreamSchema)) body: SearchStreamBody,
   ): Promise<void> {
+    const { question, mode, conditions } = body;
     const user = req.user!;
     // 敏感词前置拦截（D8/M6.3）：命中启用敏感词即阻断该次检索并落审计，
     // 必须在 SSE 响应头写出前拦截，前端才能按统一业务码提示。
@@ -146,17 +135,23 @@ export class SearchController {
       res.write(serializeSse(event, data));
 
     try {
-      await withSpan(
+      const outcome = await withSpan(
         'search.pipeline',
         {
           'search.mode': mode,
           'search.question_len': question.length,
           'request.id': getRequestId() ?? '',
         },
-        async () => {
-          await this.runPipeline(req, res, send, ac, { question, mode, conditionsJson });
-        },
+        async () => this.runPipeline(req, res, send, ac, { question, mode, conditions }),
       );
+      // 管道失败（非用户主动中止）→ 回滚本次试额，避免「搜一次失败扣一次」
+      if (outcome === 'error') {
+        await this.quota
+          .rollbackTrial(user.userId, user.roles)
+          .catch((e: unknown) =>
+            this.logger.warn(`试额回滚失败: ${e instanceof Error ? e.message : e}`),
+          );
+      }
     } finally {
       stopHeartbeat();
       await this.rateLimit.releaseSseSlot(user.userId);
@@ -165,16 +160,19 @@ export class SearchController {
     }
   }
 
-  /** 五阶段管道主体（intent → 检索 → 融合 → 生成 → 落库），异常以 SSE error 事件表达 */
+  /**
+   * 五阶段管道主体（intent → 检索 → 融合 → 生成 → 落库），异常以 SSE error 事件表达。
+   * @returns 'ok' 完成 | 'error' 管道异常（调用方回滚试额）| 'aborted' 用户主动中止（不回滚，防「点停止白嫖」）
+   */
   private async runPipeline(
     req: AuthenticatedRequest,
     res: Response,
     send: (event: Parameters<typeof serializeSse>[0], data: unknown) => void,
     ac: AbortController,
-    input: { question: string; mode: SearchMode; conditionsJson?: string },
-  ): Promise<void> {
+    input: { question: string; mode: SearchMode; conditions?: SearchStreamBody['conditions'] },
+  ): Promise<'ok' | 'error' | 'aborted'> {
     const user = req.user!;
-    const { question, mode, conditionsJson } = input;
+    const { question, mode } = input;
 
     let stage: SseStage['stage'] = 'intent';
     let reportId = '';
@@ -182,9 +180,8 @@ export class SearchController {
     try {
       // 意图阶段：分类 → 条件回填（手动条件优先）
       send('stage', { stage, msg: '理解意图中' } satisfies SseStage);
-      const manual: SearchConditions = parseConditions(conditionsJson);
       const ai = await this.intent.classify(question, ac.signal);
-      const conditions = IntentService.mergeConditions(manual, ai);
+      const conditions = IntentService.mergeConditions(input.conditions ?? {}, ai);
 
       // 先落会话（拿到 sessionId，供 done/历史使用），条件快照一并保存
       const session = await this.store.createSession(user.userId, question, mode, conditions);
@@ -194,13 +191,13 @@ export class SearchController {
       // 命中跳过外部检索（省 AnySearch/embedding 调用），未命中真实检索后回写（fire-and-forget）
       stage = 'searching';
       send('stage', { stage, msg: '检索中' } satisfies SseStage);
-      const input: ConnectorInput = { question, conditions };
+      const connInput: ConnectorInput = { question, conditions };
       const tenantId = getTenantContext()?.tenantId ?? user.userId;
       let result = await this.cache.get(tenantId, mode, question, conditions);
       if (result) {
         this.logger.debug(`检索缓存命中: mode=${mode} q=${question.slice(0, 20)}`);
       } else {
-        let fresh = await this.search.search(input, ac.signal, undefined, ROUTES_BY_MODE[mode]);
+        let fresh = await this.search.search(connInput, ac.signal, undefined, ROUTES_BY_MODE[mode]);
         // 检索优化 C：融合后 TopK 做 LLM listwise 精排（引用级门槛内重排；
         // 未启用/超时/解析失败回退 RRF 原序），精排后的顺序随缓存一并保存
         const topHits = [...fresh.cited, ...fresh.referenced];
@@ -273,11 +270,14 @@ export class SearchController {
 
       send('stage', { stage: 'done' } satisfies SseStage);
       send('done', { sessionId: session.id, reportId } satisfies SseDone);
+      return 'ok';
     } catch (e) {
       send('error', {
         message: e instanceof Error ? e.message : 'unknown error',
         stage,
       } satisfies SseError);
+      // 用户主动中止不算失败（不回滚试额），仅真实管道异常回滚
+      return ac.signal.aborted ? 'aborted' : 'error';
     }
   }
 
@@ -290,8 +290,8 @@ export class SearchController {
   ): Promise<{ items: unknown[]; total: unknown; page: number }> {
     const p = Math.max(1, Number(page) || 1);
     const size = Math.min(MAX_PAGE_SIZE, Math.max(1, Number(pageSize) || DEFAULT_PAGE_SIZE));
-    const items = await this.store.listSessions(req.user!.userId, p, size);
-    return { items, total: items.length, page: p };
+    const { items, total } = await this.store.listSessions(req.user!.userId, p, size);
+    return { items, total, page: p };
   }
 
   @Get('reports/:id')

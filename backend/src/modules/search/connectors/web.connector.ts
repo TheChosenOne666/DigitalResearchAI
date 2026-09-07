@@ -27,6 +27,25 @@ export interface AnySearchResult {
 }
 
 /**
+ * 构建联网路搜索词（纯函数，便于单测）：问题优先，
+ * 把问题中未出现的条件（国家/指标/年份区间）拼装在尾部，提升条件回填对联网路的约束力。
+ */
+export function buildWebQuery(input: ConnectorInput): string {
+  const q = input.question?.trim() ?? '';
+  const c: SearchConditions = input.conditions ?? {};
+  const parts: string[] = [];
+  for (const t of [...(c.countries ?? []), ...(c.indicators ?? [])]) {
+    const token = t?.trim();
+    if (token && !q.includes(token)) parts.push(token);
+  }
+  if (c.yearFrom != null && c.yearTo != null) {
+    const mentioned = q.includes(String(c.yearFrom)) || q.includes(String(c.yearTo));
+    if (!mentioned) parts.push(`${c.yearFrom}-${c.yearTo}`);
+  }
+  return [q, ...parts].filter(Boolean).join(' ');
+}
+
+/**
  * 从 AnySearch 响应 JSON 提取结果列表（纯函数，便于单测）。
  * 实际响应结构：{ code, message, request_id, data: { results: [], metadata: {} } }，
  * 结果挂载在 data.results 下；code !== 0 视为调用失败返回空数组。
@@ -65,13 +84,6 @@ export class WebAnySearchConnector implements SearchConnector {
     }
   }
 
-  /** 搜索词：优先用原问题，缺失则用条件拼装 */
-  private buildQuery(input: ConnectorInput): string {
-    if (input.question?.trim()) return input.question.trim();
-    const c: SearchConditions = input.conditions;
-    return [...(c.indicators ?? []), ...(c.countries ?? [])].join(' ').trim();
-  }
-
   async search(input: ConnectorInput, signal: AbortSignal): Promise<SearchHit[]> {
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
     if (this.apiKey) headers['Authorization'] = `Bearer ${this.apiKey}`;
@@ -83,7 +95,7 @@ export class WebAnySearchConnector implements SearchConnector {
         signal,
         headers,
         body: JSON.stringify({
-          query: this.buildQuery(input),
+          query: buildWebQuery(input),
           max_results: SEARCH_COUNT,
         }),
       });

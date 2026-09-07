@@ -104,27 +104,31 @@ export interface ReportDetail {
 }
 
 /**
- * 智搜 SSE 客户端：通过 fetch 读取流（可携带 Authorization 头 + Abort 控制）。
- * 解析标准 SSE 帧（event:/data:），命中回调；返回一个取消函数。
+ * 智搜 SSE 客户端：POST JSON body 发起（问题不进 URL，规避长度限制与网关日志泄漏），
+ * fetch 读取流（可携带 Authorization 头 + Abort 控制）。解析标准 SSE 帧，命中回调。
  */
 export function searchStream(
   params: { question: string; mode: SearchMode; conditions?: SearchConditions },
   handlers: SearchStreamHandlers,
   signal?: AbortSignal,
 ): Promise<{ sessionId: string; reportId: string } | void> {
-  const query = new URLSearchParams();
-  query.set('question', params.question);
-  query.set('mode', params.mode);
-  if (params.conditions) {
-    query.set('conditions', JSON.stringify(params.conditions));
-  }
-  const url = `/api/v1/search/stream?${query.toString()}`;
-
+  const headers: Record<string, string> = {
+    Accept: 'text/event-stream',
+    'Content-Type': 'application/json',
+  };
   const sessionId = localStorage.getItem('web.sessionId');
-  const headers: Record<string, string> = { Accept: 'text/event-stream' };
   if (sessionId) headers.Authorization = `Bearer ${sessionId}`;
 
-  return fetch(url, { headers, signal }).then(async (res) => {
+  return fetch('/api/v1/search/stream', {
+    method: 'POST',
+    headers,
+    signal,
+    body: JSON.stringify({
+      question: params.question,
+      mode: params.mode,
+      conditions: params.conditions ?? {},
+    }),
+  }).then(async (res) => {
     if (!res.ok || !res.body) {
       const text = await res.text().catch(() => '');
       handlers.onError?.({ message: text || `请求失败(${res.status})` });

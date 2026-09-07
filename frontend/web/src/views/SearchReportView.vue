@@ -103,7 +103,11 @@ onMounted(load);
               · Token 消耗 {{ report.tokenUsage }}
             </div>
             <div class="sr-sec">
-              <MarkdownView :content="report.contentMd" :active-cite="activeCite" />
+              <MarkdownView
+                :content="report.contentMd"
+                :active-cite="activeCite"
+                :max-cite="report.sources.length"
+              />
             </div>
           </template>
           <div v-else-if="!loading" class="empty-tip">未找到该报告</div>

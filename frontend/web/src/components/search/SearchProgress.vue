@@ -25,6 +25,8 @@ const props = defineProps<{
   reportText: string;
   /** 当前高亮的引用角标 */
   activeCite: number | null;
+  /** 来源总数（过滤 LLM 幻觉引文编号） */
+  maxCite?: number;
 }>();
 
 const emit = defineEmits<{
@@ -68,6 +70,7 @@ const isGenerating = computed(() => props.stage === 'generating' && props.runnin
         v-if="reportText"
         :content="reportText"
         :active-cite="activeCite"
+        :max-cite="maxCite"
         @cite-click="emit('cite-click', $event)"
       />
       <div v-else class="report-empty">

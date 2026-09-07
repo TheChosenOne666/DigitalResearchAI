@@ -76,14 +76,14 @@ function parseSseFrames(text: string): Array<{ event: string; data: Record<strin
     });
 }
 
-/** 发起一次智搜 SSE（带显式条件，垂直路 stub 恒有命中） */
+/** 发起一次智搜 SSE（POST body 带显式条件，垂直路 stub 恒有命中） */
 function streamSearch(token: string, question: string) {
   return request(server())
-    .get('/api/v1/search/stream')
-    .query({
+    .post('/api/v1/search/stream')
+    .send({
       question,
       mode: 'hybrid',
-      conditions: JSON.stringify({ countries: ['中国'], indicators: ['GDP增长率'], yearFrom: 2020, yearTo: 2025 }),
+      conditions: { countries: ['中国'], indicators: ['GDP增长率'], yearFrom: 2020, yearTo: 2025 },
     })
     .set('Authorization', `Bearer ${token}`);
 }

@@ -32,6 +32,10 @@ vi.mock('ioredis', () => ({
       const v = fakeRedis.map.get(key);
       return v === undefined ? null : String(v);
     }
+    async set(key: string, value: string): Promise<void> {
+      if (redisState.down) throw new Error('redis down');
+      fakeRedis.map.set(key, Number(value));
+    }
     async quit(): Promise<void> {
       return undefined;
     }
@@ -155,5 +159,40 @@ describe('QuotaService.trialLeft（查询剩余，不消耗）', () => {
     redisState.down = true;
     const { svc } = makeService({ dbUsed: 1 });
     expect(await svc.trialLeft('u1', ['USER'])).toBe(0);
+  });
+});
+
+describe('QuotaService.rollbackTrial（管道失败回滚，M8）', () => {
+  it('非会员回滚一次：Redis DECR + DB 对账同步', async () => {
+    const { svc, store } = makeService();
+    await svc.consumeTrial('u1', ['USER']);
+    expect(fakeRedis.map.get('trial:used:u1')).toBe(1);
+    await svc.rollbackTrial('u1', ['USER']);
+    expect(fakeRedis.map.get('trial:used:u1')).toBe(0);
+    expect(store.setTrialUsed).toHaveBeenLastCalledWith('u1', 0);
+    expect(await svc.trialLeft('u1', ['USER'])).toBe(1);
+  });
+
+  it('计数已为 0 时回滚钳 0 不出负数', async () => {
+    const { svc, store } = makeService();
+    await svc.rollbackTrial('u1', ['USER']);
+    expect(fakeRedis.map.get('trial:used:u1')).toBe(0);
+    expect(store.setTrialUsed).toHaveBeenLastCalledWith('u1', 0);
+  });
+
+  it('会员/管理端角色不回滚（本就未计数）', async () => {
+    const member = makeService({ member: true });
+    await member.svc.rollbackTrial('u1', ['USER']);
+    const admin = makeService();
+    await admin.svc.rollbackTrial('u1', ['PLATFORM_ADMIN']);
+    expect(member.store.setTrialUsed).not.toHaveBeenCalled();
+    expect(admin.store.setTrialUsed).not.toHaveBeenCalled();
+  });
+
+  it('Redis 故障 → 降级 DB 递减（下限钳 0）', async () => {
+    const { svc, store } = makeService({ dbUsed: 1 });
+    redisState.down = true;
+    await svc.rollbackTrial('u1', ['USER']);
+    expect(store.setTrialUsed).toHaveBeenLastCalledWith('u1', 0);
   });
 });

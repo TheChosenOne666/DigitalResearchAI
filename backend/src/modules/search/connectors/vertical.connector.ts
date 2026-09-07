@@ -183,17 +183,19 @@ export class VerticalWorldBankConnector implements SearchConnector {
     });
     const resolved = resolveIndicatorCodes(indicators);
 
+    // 多指标并发拉取（单指标失败跳过不阻断整体），结果按指标原顺序装配
+    const settled = await Promise.allSettled(
+      resolved.map(async ({ name, code }) => {
+        const obs = await fetchWdi(code, countryCodes, yearFrom, yearTo, signal);
+        const md = wdiToTableMarkdown(obs, { indicatorName: name, countryNames });
+        return { name, code, md };
+      }),
+    );
+
     const hits: SearchHit[] = [];
-    for (const { name, code } of resolved) {
-      let obs: WdiObservation[] = [];
-      try {
-        obs = await fetchWdi(code, countryCodes, yearFrom, yearTo, signal);
-      } catch {
-        // 单指标失败不阻断整体，跳过该项
-        continue;
-      }
-      const md = wdiToTableMarkdown(obs, { indicatorName: name, countryNames });
-      if (!md) continue;
+    for (const r of settled) {
+      if (r.status !== 'fulfilled' || !r.value.md) continue;
+      const { name, code, md } = r.value;
       hits.push({
         title: `${name}（${countries.join('、')}）`,
         snippet: `世界银行 WDI：${name}（${yearFrom}–${yearTo}）`,

@@ -208,28 +208,38 @@ export class SearchStoreService {
     });
   }
 
-  /** 历史会话列表（按用户，最新在前，分页） */
-  async listSessions(userId: string, page: number, pageSize: number): Promise<SessionListItem[]> {
+  /** 历史会话列表（按用户，最新在前，分页）+ 真实总数（供前端分页器计算总页数） */
+  async listSessions(
+    userId: string,
+    page: number,
+    pageSize: number,
+  ): Promise<{ items: SessionListItem[]; total: number }> {
     const skip = Math.max(0, (page - 1) * pageSize);
-    const sessions = await this.prisma.forTenant.searchSession.findMany({
-      where: { userId },
-      orderBy: { createdAt: 'desc' },
-      skip,
-      take: pageSize,
-      include: { reports: { orderBy: { createdAt: 'desc' }, take: 1 } },
-    });
-    return sessions.map((s) => {
-      const latest = s.reports[0];
-      return {
-        id: s.id,
-        question: s.question,
-        mode: s.mode,
-        conditions: s.conditions as SearchConditions | null,
-        createdAt: s.createdAt,
-        reportId: latest?.id,
-        reportCreatedAt: latest?.createdAt,
-      };
-    });
+    const [sessions, total] = await Promise.all([
+      this.prisma.forTenant.searchSession.findMany({
+        where: { userId },
+        orderBy: { createdAt: 'desc' },
+        skip,
+        take: pageSize,
+        include: { reports: { orderBy: { createdAt: 'desc' }, take: 1 } },
+      }),
+      this.prisma.forTenant.searchSession.count({ where: { userId } }),
+    ]);
+    return {
+      total,
+      items: sessions.map((s) => {
+        const latest = s.reports[0];
+        return {
+          id: s.id,
+          question: s.question,
+          mode: s.mode,
+          conditions: s.conditions as SearchConditions | null,
+          createdAt: s.createdAt,
+          reportId: latest?.id,
+          reportCreatedAt: latest?.createdAt,
+        };
+      }),
+    };
   }
 
   /** 报告详情（含来源卡；跨租户访问返回 404） */

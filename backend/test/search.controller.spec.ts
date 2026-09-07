@@ -47,8 +47,11 @@ function deps() {
     trackSearchTerm: vi.fn().mockResolvedValue(undefined),
   };
   const kb = { saveSourcesToLibrary: vi.fn() };
-  // M5.3 免费体验配额：默认放行
-  const quota = { consumeTrial: vi.fn().mockResolvedValue({ allowed: true, trialLeft: null }) };
+  // M5.3 免费体验配额：默认放行（rollbackTrial 供失败回滚断言）
+  const quota = {
+    consumeTrial: vi.fn().mockResolvedValue({ allowed: true, trialLeft: null }),
+    rollbackTrial: vi.fn().mockResolvedValue(undefined),
+  };
   // M7.1：SSE 连接数/断连率指标。直接实例化但不触发 onModuleInit，避免测试连接 Redis
   const metrics = new MetricsService({ get: (_k: string, d?: string) => d } as any);
   // M7.2：SSE 并发槽位，测试默认放行并记录调用
@@ -92,7 +95,7 @@ describe('SearchController.stream', () => {
       new BizException(ErrorCode.QUOTA_EXCEEDED, '免费体验次数已用完，开通会员可无限次使用', 402),
     );
     const { res } = fakeRes();
-    await expect(ctrl.stream(req(), res as any, '问题')).rejects.toMatchObject({ bizCode: 4003 });
+    await expect(ctrl.stream(req(), res as any, { question: '问题' })).rejects.toMatchObject({ bizCode: 4003 });
     // 拦截发生在响应头写出之前，前端可按统一业务码弹开通引导
     expect(res.setHeader).not.toHaveBeenCalled();
   });
@@ -101,7 +104,7 @@ describe('SearchController.stream', () => {
     const { ctrl, store, quota } = deps();
     store.checkSensitiveWord.mockResolvedValueOnce('违禁词');
     const { res } = fakeRes();
-    await expect(ctrl.stream(req(), res as any, '违禁词')).rejects.toMatchObject({ bizCode: 2001 });
+    await expect(ctrl.stream(req(), res as any, { question: '违禁词' })).rejects.toMatchObject({ bizCode: 2001 });
     expect(res.setHeader).not.toHaveBeenCalled();
     // 敏感词拦截在配额校验之前，命中后不消耗配额
     expect(quota.consumeTrial).not.toHaveBeenCalled();
@@ -114,13 +117,13 @@ describe('SearchController.stream', () => {
     generate.stream.mockResolvedValue({ fullText: '', tokenUsage: 0 });
     store.createSession.mockResolvedValue({ id: 's1' });
     const { res } = fakeRes();
-    await ctrl.stream(req(), res as any, '问题');
+    await ctrl.stream(req(), res as any, { question: '问题' });
     expect(quota.consumeTrial).toHaveBeenCalledWith('u1', ['USER']);
     expect(res.setHeader).toHaveBeenCalled();
   });
 
   it('五阶段编排：intent→检索→融合→生成→done，含落库', async () => {
-    const { ctrl, search, intent, generate, store } = deps();
+    const { ctrl, search, intent, generate, store, quota } = deps();
     intent.classify.mockResolvedValue({ indicators: ['GDP'] });
     search.search.mockResolvedValue({
       cited: [hit('A', 'vertical')],
@@ -135,7 +138,7 @@ describe('SearchController.stream', () => {
     store.upsertUsage.mockResolvedValue(undefined);
 
     const f = fakeRes();
-    await ctrl.stream(req(), f.res, '美国 GDP', 'hybrid', undefined);
+    await ctrl.stream(req(), f.res, { question: '美国 GDP', mode: 'hybrid' });
 
     const out = f.joined();
     expect(out).toContain('event: stage');
@@ -154,6 +157,8 @@ describe('SearchController.stream', () => {
     // 落库
     expect(store.saveReport).toHaveBeenCalledWith('s1', expect.objectContaining({ contentMd: '报告', tokenUsage: 8 }));
     expect(store.upsertUsage).toHaveBeenCalledWith('u1', 8);
+    // 管道成功不回滚试额
+    expect(quota.rollbackTrial).not.toHaveBeenCalled();
     // M6.3 搜索词统计：有结果（cited+referenced>0）→ empty=false
     expect(store.trackSearchTerm).toHaveBeenCalledWith('美国 GDP', false);
     expect(f.res.end).toHaveBeenCalled();
@@ -167,7 +172,7 @@ describe('SearchController.stream', () => {
     store.createSession.mockResolvedValue({ id: 's1' });
 
     const f = fakeRes();
-    await ctrl.stream(req(), f.res, 'q', 'hybrid', undefined);
+    await ctrl.stream(req(), f.res, { question: 'q', mode: 'hybrid' });
 
     expect(store.saveReport).not.toHaveBeenCalled();
     expect(store.upsertUsage).not.toHaveBeenCalled();
@@ -191,7 +196,7 @@ describe('SearchController.stream', () => {
     store.saveReport.mockResolvedValue({ id: 'r1' });
 
     const f = fakeRes();
-    await ctrl.stream(req(), f.res, '重复问题', 'hybrid', undefined);
+    await ctrl.stream(req(), f.res, { question: '重复问题', mode: 'hybrid' });
 
     expect(search.search).not.toHaveBeenCalled(); // 未真实检索
     expect(cache.set).not.toHaveBeenCalled(); // 命中不回写
@@ -209,7 +214,7 @@ describe('SearchController.stream', () => {
     store.saveReport.mockResolvedValue({ id: 'r1' });
 
     const f = fakeRes();
-    await ctrl.stream(req(), f.res, '新问题', 'hybrid', undefined);
+    await ctrl.stream(req(), f.res, { question: '新问题', mode: 'hybrid' });
 
     expect(search.search).toHaveBeenCalledTimes(1);
     // 单测无租户 ALS 上下文，缓存键回退 userId 维度
@@ -230,7 +235,7 @@ describe('SearchController.stream', () => {
     store.saveReport.mockResolvedValue({ id: 'r1' });
 
     const f = fakeRes();
-    await ctrl.stream(req(), f.res, 'q', 'hybrid', undefined);
+    await ctrl.stream(req(), f.res, { question: 'q', mode: 'hybrid' });
 
     const out = f.joined();
     // 来源卡顺序 = 精排后顺序，首条（原参考级）现成为引用级
@@ -258,23 +263,25 @@ describe('SearchController.stream', () => {
     store.saveReport.mockResolvedValue({ id: 'r1' });
 
     const f = fakeRes();
-    await ctrl.stream(req(), f.res, 'q', 'hybrid', undefined);
+    await ctrl.stream(req(), f.res, { question: 'q', mode: 'hybrid' });
     // 原序推送且正常完成
     expect(f.joined()).toContain('event: done');
     expect(f.joined()).toContain('"title":"A"');
   });
 
-  it('检索失败时推送 error（含阶段）', async () => {
-    const { ctrl, search, intent, store } = deps();
+  it('检索失败时推送 error（含阶段）并回滚本次试额', async () => {
+    const { ctrl, search, intent, store, quota } = deps();
     intent.classify.mockResolvedValue({});
     search.search.mockRejectedValue(new Error('boom'));
     store.createSession.mockResolvedValue({ id: 's1' });
 
     const f = fakeRes();
-    await ctrl.stream(req(), f.res, 'q', 'hybrid', undefined);
+    await ctrl.stream(req(), f.res, { question: 'q', mode: 'hybrid' });
 
     expect(f.joined()).toContain('event: error');
     expect(f.joined()).toContain('"message":"boom"');
+    // M8 管道失败 → 免费试额回滚，避免「搜一次失败扣一次」
+    expect(quota.rollbackTrial).toHaveBeenCalledWith('u1', ['USER']);
     expect(f.res.end).toHaveBeenCalled();
   });
 
@@ -293,7 +300,7 @@ describe('SearchController.stream', () => {
     store.createSession.mockResolvedValue({ id: 's1' });
 
     const f = fakeRes();
-    const p = ctrl.stream(req(), f.res, 'q', 'hybrid', undefined);
+    const p = ctrl.stream(req(), f.res, { question: 'q', mode: 'hybrid' });
     // 等待拦截（M5.3 配额校验）与 close 绑定完成，再模拟客户端断开
     await new Promise((resolve) => setImmediate(resolve));
     f.triggerClose();
@@ -303,11 +310,12 @@ describe('SearchController.stream', () => {
 });
 
 describe('SearchController.histories / reportDetail', () => {
-  it('histories 分页调 store', async () => {
+  it('histories 分页调 store 并透传真实总数', async () => {
     const { ctrl, store } = deps();
-    store.listSessions.mockResolvedValue([{ id: 's1', question: 'q' }]);
+    store.listSessions.mockResolvedValue({ items: [{ id: 's1', question: 'q' }], total: 37 });
     const r = await ctrl.histories(req(), '1', '10');
     expect(r.items).toHaveLength(1);
+    expect(r.total).toBe(37);
     expect(store.listSessions).toHaveBeenCalledWith('u1', 1, 10);
   });
 

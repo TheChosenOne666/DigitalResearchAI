@@ -261,6 +261,7 @@ onBeforeUnmount(() => abortCtrl.value?.abort());
           :error="errorMsg"
           :report-text="reportText"
           :active-cite="activeCite"
+          :max-cite="sources.length"
           @cite-click="onCiteClick"
         />
 

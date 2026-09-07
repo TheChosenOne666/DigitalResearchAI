@@ -10,6 +10,8 @@ import { nextTick, ref, watch } from 'vue';
 const props = defineProps<{
   content: string;
   activeCite?: number | null;
+  /** 来源总数上限：{c:N} 超过该值视为 LLM 幻觉编号，退化为纯文本不可点（缺省不过滤） */
+  maxCite?: number;
 }>();
 
 const emit = defineEmits<{ citeClick: [idx: number] }>();
@@ -27,15 +29,18 @@ function escapeHtml(s: string): string {
 }
 
 /** 行内：粗体/斜体/行内代码/引文角标（引文最后替换，避免被其它规则破坏） */
-function renderInline(s: string): string {
+function renderInline(s: string, maxCite?: number): string {
   let out = s
     .replace(/`([^`]+)`/g, (_, c: string) => `<code>${c}</code>`)
     .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
     .replace(/(^|[^*])\*([^*\n]+)\*(?![^*])/g, '$1<em>$2</em>');
-  out = out.replace(
-    /\{c:(\d+)\}/g,
-    (_, n: string) => `<sup class="cite" data-idx="${Number(n)}">[${Number(n)}]</sup>`,
-  );
+  out = out.replace(/\{c:(\d+)\}/g, (_, n: string) => {
+    const num = Number(n);
+    // 报告内引文按 1 起编号，来源卡 idx 从 0 起：data-idx 存 N-1 供联动，展示仍用 [N]
+    // 越界编号（LLM 幻觉引文）退化为纯文本，不渲染可点角标
+    if (maxCite != null && num > maxCite) return `[${num}]`;
+    return `<sup class="cite" data-idx="${num - 1}">[${num}]</sup>`;
+  });
   return out;
 }
 
@@ -53,7 +58,7 @@ const LIST_RE = /^([-*+]|\d+\.)\s+/;
 const TABLE_RE = /^\s*\|/;
 
 /** 渲染（多级）列表，返回结束后行号 */
-function renderList(lines: string[], start: number, out: string[]): number {
+function renderList(lines: string[], start: number, out: string[], maxCite?: number): number {
   const tag = /^\d+\./.test(lines[start].trim()) ? 'ol' : 'ul';
   let html = `<${tag}>`;
   let i = start;
@@ -66,7 +71,7 @@ function renderList(lines: string[], start: number, out: string[]): number {
     const ind = (line.match(/^ */) ?? [''])[0].length;
     if (ind < baseIndent) break;
     const content = line.trim().replace(LIST_RE, '');
-    html += `<li>${renderInline(escapeHtml(content))}`;
+    html += `<li>${renderInline(escapeHtml(content), maxCite)}`;
     // 嵌套列表（下一行更深缩进且仍是列表项）
     if (i + 1 < lines.length) {
       const nl = lines[i + 1];
@@ -80,7 +85,7 @@ function renderList(lines: string[], start: number, out: string[]): number {
           !!(lines[j].trim().match(LIST_RE))
         ) {
           const sm = lines[j].trim().match(LIST_RE)!;
-          html += `<li>${renderInline(escapeHtml(lines[j].trim().slice(sm[0].length)))}</li>`;
+          html += `<li>${renderInline(escapeHtml(lines[j].trim().slice(sm[0].length)), maxCite)}</li>`;
           j++;
         }
         html += `</${tag2}>`;
@@ -98,7 +103,7 @@ function renderList(lines: string[], start: number, out: string[]): number {
 }
 
 /** 全文 Markdown → HTML */
-function renderMarkdown(md: string): string {
+function renderMarkdown(md: string, maxCite?: number): string {
   const lines = md.replace(/\r\n/g, '\n').split('\n');
   const out: string[] = [];
   let i = 0;
@@ -125,7 +130,7 @@ function renderMarkdown(md: string): string {
     const h = t.match(/^(#{1,3})\s+(.*)$/);
     if (h) {
       const lvl = h[1].length;
-      out.push(`<h${lvl}>${renderInline(escapeHtml(h[2]))}</h${lvl}>`);
+      out.push(`<h${lvl}>${renderInline(escapeHtml(h[2]), maxCite)}</h${lvl}>`);
       i++;
       continue;
     }
@@ -142,7 +147,7 @@ function renderMarkdown(md: string): string {
         q.push(lines[i].replace(/^>\s?/, ''));
         i++;
       }
-      out.push(`<blockquote>${renderInline(escapeHtml(q.join('\n')))}</blockquote>`);
+      out.push(`<blockquote>${renderInline(escapeHtml(q.join('\n')), maxCite)}</blockquote>`);
       continue;
     }
     // 表格：当前行是表头且下一行是分隔行
@@ -158,10 +163,10 @@ function renderMarkdown(md: string): string {
           i++;
         }
         let th = '<table><thead><tr>';
-        th += header.map((c) => `<th>${renderInline(escapeHtml(c))}</th>`).join('');
+        th += header.map((c) => `<th>${renderInline(escapeHtml(c), maxCite)}</th>`).join('');
         th += '</tr></thead><tbody>';
         for (const r of rows) {
-          th += '<tr>' + r.map((c) => `<td>${renderInline(escapeHtml(c))}</td>`).join('') + '</tr>';
+          th += '<tr>' + r.map((c) => `<td>${renderInline(escapeHtml(c), maxCite)}</td>`).join('') + '</tr>';
         }
         th += '</tbody></table>';
         out.push(th);
@@ -170,7 +175,7 @@ function renderMarkdown(md: string): string {
     }
     // 列表
     if (LIST_RE.test(t)) {
-      i = renderList(lines, i, out);
+      i = renderList(lines, i, out, maxCite);
       continue;
     }
     // 段落
@@ -185,15 +190,15 @@ function renderMarkdown(md: string): string {
       para.push(lines[i]);
       i++;
     }
-    out.push(`<p>${renderInline(escapeHtml(para.join(' ')))}</p>`);
+    out.push(`<p>${renderInline(escapeHtml(para.join(' ')), maxCite)}</p>`);
   }
   return out.join('\n');
 }
 
 watch(
-  () => props.content,
-  (val) => {
-    html.value = renderMarkdown(val);
+  () => [props.content, props.maxCite] as const,
+  ([val, max]) => {
+    html.value = renderMarkdown(val, max);
   },
   { immediate: true },
 );

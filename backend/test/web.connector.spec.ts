@@ -1,8 +1,35 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import {
+  buildWebQuery,
   parseAnySearchResponse,
   WebAnySearchConnector,
 } from '../src/modules/search/connectors/web.connector';
+
+describe('buildWebQuery（联网路搜索词融合条件）', () => {
+  it('问题优先，未出现的国家/指标/年份拼装在尾部', () => {
+    expect(
+      buildWebQuery({
+        question: '经济增长如何',
+        conditions: { countries: ['中国'], indicators: ['GDP'], yearFrom: 2020, yearTo: 2025 },
+      }),
+    ).toBe('经济增长如何 中国 GDP 2020-2025');
+  });
+
+  it('问题已包含的条件（含年份）不重复拼接', () => {
+    expect(
+      buildWebQuery({
+        question: '中国 GDP 2020 走势',
+        conditions: { countries: ['中国'], indicators: ['GDP'], yearFrom: 2020, yearTo: 2025 },
+      }),
+    ).toBe('中国 GDP 2020 走势');
+  });
+
+  it('无问题时仅用条件拼装', () => {
+    expect(
+      buildWebQuery({ question: '', conditions: { countries: ['中国'], indicators: ['CPI'] } }),
+    ).toBe('中国 CPI');
+  });
+});
 
 afterEach(() => {
   vi.restoreAllMocks();

@@ -29,6 +29,16 @@ export interface GenerateResult {
 
 const CITATION_PATTERN = /\{c:(\d+)\}/g;
 
+/** 单条引用来源拼入 prompt 的正文上限（字符）：防网页全文撑爆上下文（6 条引用级 × 上限 ≈ 1.2 万字符封顶） */
+const SOURCE_CONTENT_LIMIT = 2000;
+
+/** 单条来源正文按上限截断，超长补截断提示（WDI 表格通常远小于该值，不受影响） */
+export function clipSourceContent(contentMd: string | undefined): string {
+  if (!contentMd) return '';
+  if (contentMd.length <= SOURCE_CONTENT_LIMIT) return contentMd;
+  return `${contentMd.slice(0, SOURCE_CONTENT_LIMIT)}…（原文过长已截断）`;
+}
+
 /** 解析文本片段中出现的引文编号 {c:N} */
 export function parseCitations(text: string): number[] {
   const out: number[] = [];
@@ -52,7 +62,7 @@ export function buildGeneratePrompt(
     // kb:// 为本地来源内部去重标识，非真实链接，不进上下文
     const url = s.url && !s.url.startsWith('kb://') ? `（${s.url}）` : '';
     const head = `[${n}] ${s.title}${url}`;
-    const body = s.contentMd ? `\n${s.contentMd}` : '';
+    const body = clipSourceContent(s.contentMd) ? `\n${clipSourceContent(s.contentMd)}` : '';
     return `${head}${body}`;
   });
   const condLine =

@@ -51,6 +51,27 @@ describe('VerticalWorldBankConnector.search', () => {
     expect(spy).not.toHaveBeenCalled();
   });
 
+  it('多指标并发拉取且结果保持指标原顺序（慢指标在前）', async () => {
+    globalThis.fetch = vi.fn(async (url: unknown) => {
+      const code = String(url).split('/indicator/')[1]?.split('?')[0] ?? '';
+      // 第二个指标（人口）更快返回，验证顺序仍按指标原序装配
+      await new Promise((r) => setTimeout(r, code === 'SP.POP.TOTL' ? 1 : 20));
+      return {
+        ok: true,
+        json: async () => [
+          { page: 1, pages: 1, per_page: 100, total: 1 },
+          [{ countryiso3code: 'USA', date: '2021', value: 1, indicator: { value: code } }],
+        ],
+      } as unknown as Response;
+    }) as unknown as typeof fetch;
+    const c = new VerticalWorldBankConnector();
+    const hits = await c.search(
+      { question: 'q', conditions: { countries: ['美国'], indicators: ['GDP', '人口'] } },
+      new AbortController().signal,
+    );
+    expect(hits.map((h) => h.title)).toEqual(['GDP（美国）', '人口（美国）']);
+  });
+
   it('调用 WDI 并映射为垂直路 hit（mock fetch）', async () => {
     const fakeJson = [
       { page: 1, pages: 1, per_page: 100, total: 1 },
