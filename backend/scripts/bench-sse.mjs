@@ -79,10 +79,16 @@ async function runOne(sessionId, timeoutMs) {
   const timer = setTimeout(() => ctrl.abort(), timeoutMs);
 
   try {
-    const res = await fetch(
-      `${BASE}/api/v1/search/stream?question=${encodeURIComponent(QUESTION)}`,
-      { headers: { Authorization: `Bearer ${sessionId}` }, signal: ctrl.signal },
-    );
+    const res = await fetch(`${BASE}/api/v1/search/stream`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${sessionId}`,
+        'Content-Type': 'application/json',
+        Accept: 'text/event-stream',
+      },
+      body: JSON.stringify({ question: QUESTION, mode: 'hybrid' }),
+      signal: ctrl.signal,
+    });
     if (!res.ok || !res.body) {
       error = `HTTP ${res.status}`;
       return { firstPacketMs, doneMs, error, sawDone, stages };
