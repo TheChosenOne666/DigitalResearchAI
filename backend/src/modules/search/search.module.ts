@@ -3,6 +3,11 @@ import { PrismaModule } from '../../common/prisma/prisma.module';
 import { KbModule } from '../kb/kb.module';
 import { MemberModule } from '../member/member.module';
 import { SearchController } from './search.controller';
+import { SearchUploadController } from './upload/search-upload.controller';
+import { SearchUploadService } from './upload/search-upload.service';
+import { SearchTaskController } from './task/search-task.controller';
+import { SearchTaskService } from './task/search-task.service';
+import { SearchTaskStoreService } from './persistence/search-task.store.service';
 import { SearchService, SEARCH_CONNECTORS } from './search.service';
 import { VerticalWorldBankConnector } from './connectors/vertical.connector';
 import { LocalConnector } from './connectors/local.connector';
@@ -21,7 +26,7 @@ import { RerankService } from './fusion/rerank.service';
  */
 @Module({
   imports: [PrismaModule, KbModule, MemberModule],
-  controllers: [SearchController],
+  controllers: [SearchController, SearchUploadController, SearchTaskController],
   providers: [
     SearchService,
     VerticalWorldBankConnector,
@@ -32,6 +37,9 @@ import { RerankService } from './fusion/rerank.service';
     SearchStoreService,
     SearchCacheService,
     RerankService,
+    SearchUploadService,
+    SearchTaskService,
+    SearchTaskStoreService,
     {
       provide: SEARCH_CONNECTORS,
       useFactory: (

@@ -350,15 +350,25 @@ export async function fetchReportVersions(
   );
 }
 
+/** 报告导出格式（18 智搜增强新增 pdf） */
+export type ExportFormat = 'docx' | 'pptx' | 'pdf';
+
+/** 导出格式的中文展示名（智搜报告页 / 分析结果页 / 我的报告三处导出入口共用） */
+export const EXPORT_FORMAT_LABEL: Record<ExportFormat, string> = {
+  docx: 'Word',
+  pptx: 'PPT',
+  pdf: 'PDF',
+};
+
 /**
- * 导出报告（M4.4）：POST /report/export 返回二进制流，浏览器触发下载。
+ * 导出报告（M4.4 / 18 智搜增强）：POST /report/export 返回二进制流，浏览器触发下载。
  * @param type search（智搜报告，id 为 sessionId）/ workspace（分析结果报告，id 为 reportId）
- * @param format docx / pptx
+ * @param format docx / pptx / pdf
  */
 export async function exportReport(
   type: 'search' | 'workspace',
   id: string,
-  format: 'docx' | 'pptx',
+  format: ExportFormat,
 ): Promise<void> {
   const res = await fetch('/api/v1/report/export', {
     method: 'POST',

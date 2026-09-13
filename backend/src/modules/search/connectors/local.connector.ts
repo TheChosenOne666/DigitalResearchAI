@@ -3,7 +3,7 @@ import type {
   ConnectorInput,
   SearchConnector,
   SearchHit,
-  SourceType,
+  ConnectorSourceType,
 } from './connector.interface';
 import { KbRetrieverService } from '../../kb/retriever/kb.retriever.service';
 
@@ -14,7 +14,7 @@ import { KbRetrieverService } from '../../kb/retriever/kb.retriever.service';
  */
 @Injectable()
 export class LocalConnector implements SearchConnector {
-  readonly sourceType: SourceType = 'local';
+  readonly sourceType: ConnectorSourceType = 'local';
   private readonly logger = new Logger(LocalConnector.name);
 
   constructor(private readonly retriever: KbRetrieverService) {}

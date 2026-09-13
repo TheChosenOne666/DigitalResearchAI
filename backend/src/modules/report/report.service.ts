@@ -1,4 +1,5 @@
 import { HttpStatus, Injectable, Logger } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { getTenantContext } from '../../common/auth/tenant-context';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { BizException } from '../../common/exceptions/biz.exception';
@@ -7,13 +8,30 @@ import { SearchStoreService } from '../search/persistence/search.store.service';
 import { WorkspaceStoreService } from '../workspace/workspace.store.service';
 import { buildWord, type ExportReport, type ExportSource } from './export/word.builder';
 import { buildPpt } from './export/ppt.builder';
+import { buildPdf } from './export/pdf.builder';
+
+/** 支持的导出格式 */
+export type ExportFormat = 'docx' | 'pptx' | 'pdf';
 
 /** 导出入参 */
 export interface ExportInput {
   type: 'search' | 'workspace';
   id: string;
-  format: 'docx' | 'pptx';
+  format: ExportFormat;
 }
+
+/** 各格式的扩展名与 MIME 类型 */
+const FORMAT_META: Record<ExportFormat, { ext: string; contentType: string }> = {
+  docx: {
+    ext: 'docx',
+    contentType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  },
+  pptx: {
+    ext: 'pptx',
+    contentType: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+  },
+  pdf: { ext: 'pdf', contentType: 'application/pdf' },
+};
 
 /** 导出结果 */
 export interface ExportResult {
@@ -49,7 +67,7 @@ function safeFilename(s: string): string {
 }
 
 /**
- * 报告导出服务（M4.4）：智搜报告 + 分析结果报告 → Word(.docx) / PPT(.pptx)。
+ * 报告导出服务（M4.4 / 18 智搜增强）：智搜报告 + 分析结果报告 → Word(.docx) / PPT(.pptx) / PDF(.pdf)。
  * 智搜报告正文 {c:N} → 上标 [N] + 文末来源表（引文映射）；导出落审计。
  */
 @Injectable()
@@ -60,6 +78,7 @@ export class ReportService {
     private readonly searchStore: SearchStoreService,
     private readonly workspaceStore: WorkspaceStoreService,
     private readonly prisma: PrismaService,
+    private readonly config: ConfigService,
   ) {}
 
   /** 组装统一导出输入并生成目标格式文件 */
@@ -70,20 +89,40 @@ export class ReportService {
     }
 
     const report = await this.loadReport(type, id);
-    const buffer = format === 'docx' ? await buildWord(report) : await buildPpt(report);
+    const buffer = await this.buildByFormat(format, report);
 
     await this.audit(type, id, format);
 
-    const ext = format === 'docx' ? 'docx' : 'pptx';
-    const contentType =
-      format === 'docx'
-        ? 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
-        : 'application/vnd.openxmlformats-officedocument.presentationml.presentation';
+    const meta = FORMAT_META[format];
     return {
       buffer,
-      filename: `${safeFilename(report.title)}.${ext}`,
-      contentType,
+      filename: `${safeFilename(report.title)}.${meta.ext}`,
+      contentType: meta.contentType,
     };
+  }
+
+  /**
+   * 按格式生成文件二进制。
+   * @param format 导出格式
+   * @param report 归一化报告
+   * @throws BizException 未知格式
+   */
+  private async buildByFormat(format: ExportFormat, report: ExportReport): Promise<Buffer> {
+    switch (format) {
+      case 'docx':
+        return buildWord(report);
+      case 'pptx':
+        return buildPpt(report);
+      case 'pdf':
+        // 字体路径走配置（生产显式指定中文字体，避免依赖宿主环境字体）
+        return buildPdf(report, this.config.get<string>('PDF_FONT_PATH'));
+      default:
+        throw new BizException(
+          ErrorCode.VALIDATION_FAILED,
+          `不支持的导出格式：${format}`,
+          HttpStatus.BAD_REQUEST,
+        );
+    }
   }
 
   /** 按类型取报告，归一化为 ExportReport */

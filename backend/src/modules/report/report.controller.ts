@@ -9,7 +9,7 @@ import {
 import type { Response } from 'express';
 import { BizException } from '../../common/exceptions/biz.exception';
 import { ErrorCode } from '@app/shared';
-import { ReportService } from './report.service';
+import { ReportService, type ExportFormat } from './report.service';
 
 /** 报告导出入参 */
 interface ExportBody {
@@ -19,20 +19,22 @@ interface ExportBody {
 }
 
 const VALID_TYPES = new Set(['search', 'workspace']);
-const VALID_FORMATS = new Set(['docx', 'pptx']);
+const VALID_FORMATS = new Set<ExportFormat>(['docx', 'pptx', 'pdf']);
 
 /** 校验并归一化导出入参（非法返回错误文案，通过返回 null） */
-function normalizeExport(body: ExportBody | undefined): { type: 'search' | 'workspace'; id: string; format: 'docx' | 'pptx' } | string {
+function normalizeExport(
+  body: ExportBody | undefined,
+): { type: 'search' | 'workspace'; id: string; format: ExportFormat } | string {
   if (!body || typeof body !== 'object') return '缺少导出参数';
   const { type, id, format } = body;
   if (!type || !VALID_TYPES.has(type)) return '报告类型不合法（search / workspace）';
   if (!id || typeof id !== 'string') return '缺少报告 ID';
-  if (!format || !VALID_FORMATS.has(format)) return '导出格式不合法（docx / pptx）';
-  return { type: type as 'search' | 'workspace', id, format: format as 'docx' | 'pptx' };
+  if (!format || !VALID_FORMATS.has(format as ExportFormat)) return '导出格式不合法（docx / pptx / pdf）';
+  return { type: type as 'search' | 'workspace', id, format: format as ExportFormat };
 }
 
 /**
- * 报告导出控制器（M4.4）：POST /report/export 返回 Word/PPT 二进制流。
+ * 报告导出控制器（M4.4 / 18 智搜增强）：POST /report/export 返回 Word/PPT/PDF 二进制流。
  * 直接经 @Res 写流，绕过统一响应体包装。
  */
 @Controller('report')

@@ -4,7 +4,9 @@ import { PrismaService } from '../../../common/prisma/prisma.service';
 import { BizException } from '../../../common/exceptions/biz.exception';
 import { Prisma } from '../../../generated/prisma/client';
 import { ErrorCode } from '@app/shared';
+import type { RetrievalSourceItem } from '@app/shared';
 import type { SearchConditions, SearchHit } from '../connectors/connector.interface';
+import { RETRIEVAL_TTL_SECONDS } from '../search.constants';
 
 /** 会话列表项（历史接口返回） */
 export interface SessionListItem {
@@ -16,6 +18,8 @@ export interface SessionListItem {
   /** 最新报告（If存在） */
   reportId?: string;
   reportCreatedAt?: Date;
+  /** 17 两段式：pending_selection=有检索快照待选择 / done=已出报告（旧会话无快照也归 done） */
+  status: 'pending_selection' | 'done';
 }
 
 /** 报告详情（含来源卡） */
@@ -42,6 +46,23 @@ export interface ReportInput {
   paramsSnapshot: Record<string, unknown>;
   tokenUsage: number;
   sources: Array<{ hit: SearchHit; idx: number; isCited: boolean }>;
+}
+
+/** 已完成章节（18 批 4 断点续跑载体） */
+export interface ReportSegmentRow {
+  idx: number;
+  heading: string;
+  contentMd: string;
+}
+
+/** 报告草稿（含已完成章节） */
+export interface DraftReport {
+  id: string;
+  /** 断点位置：下一章从该序号继续 */
+  segmentIdx: number;
+  segments: ReportSegmentRow[];
+  /** 生成参数快照（续跑时沿用原勾选来源） */
+  paramsSnapshot: unknown;
 }
 
 /**
@@ -91,16 +112,20 @@ export class SearchStoreService {
    * @returns 报告 id
    */
   async saveReport(sessionId: string, input: ReportInput): Promise<{ id: string }> {
+    const { tenantId } = this.requireTenant();
     const session = (await this.prisma.forTenant.searchSession.update({
       where: { id: sessionId },
       data: {
         reports: {
           create: {
+            // 嵌套 create 不会被租户扩展注入，需显式带 tenantId
+            tenantId,
             contentMd: input.contentMd,
             paramsSnapshot: input.paramsSnapshot as object,
             tokenUsage: input.tokenUsage,
             sources: {
               create: input.sources.map(({ hit, idx, isCited }) => ({
+                tenantId,
                 idx,
                 title: hit.title,
                 url: hit.url ?? null,
@@ -120,6 +145,157 @@ export class SearchStoreService {
       throw new BizException(ErrorCode.INTERNAL_ERROR, '报告落库失败', HttpStatus.INTERNAL_SERVER_ERROR);
     }
     return { id: report.id };
+  }
+
+  // ===== 18 批 4：分段生成 / 断点续跑 =====
+
+  /** 校验报告归属（经会话关联，非本租户视为不存在） */
+  private async assertReportOwned(reportId: string): Promise<void> {
+    const session = await this.prisma.forTenant.searchSession.findFirst({
+      where: { reports: { some: { id: reportId } } },
+      select: { id: true },
+    });
+    if (!session) {
+      throw new BizException(ErrorCode.NOT_FOUND, '报告不存在', HttpStatus.NOT_FOUND);
+    }
+  }
+
+  /**
+   * 创建报告草稿（分段生成起点）：status=DRAFT、segmentIdx=0、正文为空；
+   * 真正的正文由 saveSegment 逐章累积，completeReport 后转 COMPLETE。
+   * 同时清理该会话遗留草稿，避免多次中断堆积。
+   */
+  async createDraftReport(
+    sessionId: string,
+    paramsSnapshot: Record<string, unknown>,
+  ): Promise<{ id: string }> {
+    // 先校验会话归属：下面的 deleteMany 走系统 client（无租户注入），不能省这步
+    const { tenantId } = this.requireTenant();
+    const owned = await this.prisma.forTenant.searchSession.findFirst({
+      where: { id: sessionId },
+      select: { id: true },
+    });
+    if (!owned) {
+      throw new BizException(ErrorCode.NOT_FOUND, '会话不存在', HttpStatus.NOT_FOUND);
+    }
+    await this.prisma.searchReport.deleteMany({ where: { sessionId, tenantId, status: 'DRAFT' } });
+    const session = (await this.prisma.forTenant.searchSession.update({
+      where: { id: sessionId },
+      data: {
+        reports: {
+          create: {
+            // 嵌套 create 不会被租户扩展注入（扩展只处理顶层 data），必须显式带上
+            tenantId,
+            contentMd: '',
+            paramsSnapshot: paramsSnapshot as object,
+            tokenUsage: 0,
+            status: 'DRAFT',
+            segmentIdx: 0,
+          },
+        },
+      },
+      include: { reports: { orderBy: { createdAt: 'desc' }, take: 1 } },
+    })) as unknown as { reports: Array<{ id: string }> };
+    const report = session.reports[0];
+    if (!report) {
+      throw new BizException(
+        ErrorCode.INTERNAL_ERROR,
+        '报告草稿创建失败',
+        HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+    return { id: report.id };
+  }
+
+  /** 落章节（幂等 upsert）：续跑重复生成同一章时覆盖，不会产生重复段落 */
+  async saveSegment(
+    reportId: string,
+    idx: number,
+    heading: string,
+    contentMd: string,
+  ): Promise<void> {
+    await this.assertReportOwned(reportId);
+    const { tenantId } = this.requireTenant();
+    await this.prisma.searchReportSegment.upsert({
+      where: { reportId_idx: { reportId, idx } },
+      // 走系统 client（上面已校验报告归属），tenantId 需显式带
+      create: { tenantId, reportId, idx, heading, contentMd },
+      update: { heading, contentMd },
+    });
+  }
+
+  /** 更新草稿进度（累积正文 + 断点位置 + 用量） */
+  async updateDraft(
+    reportId: string,
+    patch: { segmentIdx: number; contentMd: string; tokenUsage: number },
+  ): Promise<void> {
+    await this.assertReportOwned(reportId);
+    await this.prisma.searchReport.update({
+      where: { id: reportId },
+      data: {
+        segmentIdx: patch.segmentIdx,
+        contentMd: patch.contentMd,
+        tokenUsage: patch.tokenUsage,
+      },
+    });
+  }
+
+  /** 完成报告：写全文 + 状态转 COMPLETE + 落来源卡（先清旧来源，支持重试覆盖） */
+  async completeReport(
+    reportId: string,
+    input: { contentMd: string; tokenUsage: number; sources: ReportInput['sources'] },
+  ): Promise<void> {
+    await this.assertReportOwned(reportId);
+    const { tenantId } = this.requireTenant();
+    await this.prisma.searchReport.update({
+      where: { id: reportId },
+      data: {
+        contentMd: input.contentMd,
+        tokenUsage: input.tokenUsage,
+        status: 'COMPLETE',
+        sources: {
+          deleteMany: {},
+          // 嵌套 create 不会被租户扩展注入，需显式带 tenantId
+          create: input.sources.map(({ hit, idx, isCited }) => ({
+            tenantId,
+            idx,
+            title: hit.title,
+            url: hit.url ?? null,
+            snippet: hit.snippet,
+            sourceType: hit.sourceType,
+            isCited,
+            meta: hit.meta ? (hit.meta as Prisma.InputJsonValue) : Prisma.JsonNull,
+          })),
+        },
+      },
+    });
+  }
+
+  /** 取会话的草稿报告（含已完成章节），无草稿返回 null（断点续跑用） */
+  async getDraftReport(sessionId: string): Promise<DraftReport | null> {
+    const session = await this.prisma.forTenant.searchSession.findFirst({
+      where: { id: sessionId },
+      include: {
+        reports: {
+          where: { status: 'DRAFT' },
+          orderBy: { createdAt: 'desc' },
+          take: 1,
+          include: { segments: { orderBy: { idx: 'asc' } } },
+        },
+      },
+    });
+    const report = session?.reports[0];
+    if (!report) return null;
+    return {
+      id: report.id,
+      segmentIdx: report.segmentIdx,
+      paramsSnapshot: report.paramsSnapshot,
+      segments: report.segments.map((s) => ({
+        idx: s.idx,
+        heading: s.heading,
+        contentMd: s.contentMd,
+      })),
+    };
   }
 
   /**
@@ -221,7 +397,11 @@ export class SearchStoreService {
         orderBy: { createdAt: 'desc' },
         skip,
         take: pageSize,
-        include: { reports: { orderBy: { createdAt: 'desc' }, take: 1 } },
+        include: {
+          // 18 批 4：只取已完成报告——DRAFT 草稿不参与历史展示（可在任务列表续跑）
+          reports: { where: { status: 'COMPLETE' }, orderBy: { createdAt: 'desc' }, take: 1 },
+          retrieval: { select: { id: true } },
+        },
       }),
       this.prisma.forTenant.searchSession.count({ where: { userId } }),
     ]);
@@ -237,9 +417,80 @@ export class SearchStoreService {
           createdAt: s.createdAt,
           reportId: latest?.id,
           reportCreatedAt: latest?.createdAt,
+          // 17 两段式：有快照无报告 → 待选择（前端点击恢复选择态而非重搜）
+          status: s.retrieval && !latest ? ('pending_selection' as const) : ('done' as const),
         };
       }),
     };
+  }
+
+  /** 清空用户全部智搜历史（报告/快照经 schema onDelete: Cascade 级联删除，tenant_id 由 Extension 注入） */
+  async clearSessions(userId: string): Promise<{ deleted: number }> {
+    const { tenantId } = this.requireTenant();
+    const res = await this.prisma.forTenant.searchSession.deleteMany({
+      where: { userId },
+    });
+    this.logger.log(`清空智搜历史: tenant=${tenantId} user=${userId} deleted=${res.count}`);
+    return { deleted: res.count };
+  }
+
+  /**
+   * 落检索快照（17 两段式第一段）：会话一对一 upsert（同会话重复检索覆盖旧快照）。
+   * 同时**懒删除本租户已过期快照**（超过 TTL 的快照对生成/续跑一律已失效，
+   * 行内 source 正文 JSON 较大，不清理会持续堆积）——沿用 search_uploads 的懒删除口径，
+   * 不为此引入定时任务。
+   * @param sources 精排后全量来源（含 idx 与 isCited）
+   */
+  async saveRetrieval(
+    sessionId: string,
+    question: string,
+    mode: string,
+    sources: Array<Omit<RetrievalSourceItem, 'contentMd'> & { contentMd: string }>,
+  ): Promise<void> {
+    await this.purgeExpiredRetrievals();
+    const { tenantId } = this.requireTenant();
+    await this.prisma.forTenant.searchRetrieval.upsert({
+      where: { sessionId },
+      create: {
+        tenantId,
+        sessionId,
+        question,
+        mode,
+        sources: sources as unknown as Prisma.InputJsonValue,
+      },
+      update: { question, mode, sources: sources as unknown as Prisma.InputJsonValue },
+    });
+  }
+
+  /**
+   * 清理本租户已过期的检索快照（懒删除，返回删除条数）。
+   * `search_retrieval` 现已带 tenant_id 并登记隔离，租户条件由扩展注入；
+   * 此处仍显式带上 tenantId（破坏性操作，不依赖隐式行为）。
+   */
+  async purgeExpiredRetrievals(): Promise<number> {
+    const { tenantId } = this.requireTenant();
+    const deadline = new Date(Date.now() - RETRIEVAL_TTL_SECONDS * 1000);
+    const { count } = await this.prisma.forTenant.searchRetrieval.deleteMany({
+      where: { createdAt: { lt: deadline }, tenantId },
+    });
+    if (count > 0) this.logger.log(`清理过期检索快照 ${count} 条 tenant=${tenantId}`);
+    return count;
+  }
+
+  /**
+   * 取检索快照（含原始问题，生成阶段用）：跨租户/不存在返回 null。
+   * 不做恢复窗口过滤（过期判定由调用方按 expiresInSeconds 语义处理）。
+   */
+  async getRetrieval(
+    sessionId: string,
+  ): Promise<{ question: string; mode: string; sources: RetrievalSourceItem[]; createdAt: Date } | null> {
+    const row = await this.prisma.forTenant.searchRetrieval.findFirst({
+      where: { sessionId },
+      include: { session: { select: { question: true } } },
+    });
+    if (!row) return null;
+    const sources = (row.sources as unknown as RetrievalSourceItem[]) ?? [];
+    return { question: row.session.question, mode: row.mode, sources, createdAt: row.createdAt };
   }
 
   /** 报告详情（含来源卡；跨租户访问返回 404） */
@@ -248,6 +499,8 @@ export class SearchStoreService {
       where: { id: sessionId },
       include: {
         reports: {
+          // 18 批 4：只返回已完成报告（草稿不可浏览/导出）
+          where: { status: 'COMPLETE' },
           orderBy: { createdAt: 'desc' },
           take: 1,
           include: { sources: { orderBy: { idx: 'asc' } } },

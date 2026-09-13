@@ -8,7 +8,9 @@ import {
   fetchAnalyzeReport,
   saveAnalyzeToKb,
   exportReport,
+  EXPORT_FORMAT_LABEL,
   type AnalyzeReportDetail,
+  type ExportFormat,
 } from '@/api/workspace';
 import { listLibraries, listGroups, type KbLibrary, type KbGroup } from '@/api/kb';
 
@@ -61,15 +63,15 @@ function backToWorkspace(): void {
   router.push('/workspace');
 }
 
-/** 导出报告文件（M4.4：Word / PPT 二进制流下载） */
+/** 导出报告文件（M4.4 / 18 智搜增强：Word / PPT / PDF 二进制流下载） */
 const exporting = ref(false);
 
-async function downloadFile(format: 'docx' | 'pptx'): Promise<void> {
+async function downloadFile(format: ExportFormat): Promise<void> {
   if (!report.value || exporting.value) return;
   exporting.value = true;
   try {
     await exportReport('workspace', report.value.id, format);
-    ElMessage.success(`已导出 ${format === 'docx' ? 'Word' : 'PPT'} 文件`);
+    ElMessage.success(`已导出 ${EXPORT_FORMAT_LABEL[format]} 文件`);
   } catch (e) {
     ElMessage.error(e instanceof Error ? e.message : '导出失败');
   } finally {
@@ -167,7 +169,7 @@ onMounted(load);
             <svg class="ic" viewBox="0 0 24 24" fill="none"><path d="M19 12H5m0 0l6-6m-6 6l6 6" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" /></svg>
             返回数据分析工作台
           </button>
-          <el-dropdown trigger="click" :disabled="exporting" @command="(f: 'docx' | 'pptx') => downloadFile(f)">
+          <el-dropdown trigger="click" :disabled="exporting" @command="(f: ExportFormat) => downloadFile(f)">
             <button class="btn">
               <svg class="ic" viewBox="0 0 24 24" fill="none"><path d="M12 3v12m0 0l-4-4m4 4l4-4M4 19h16" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" /></svg>
               下载文件
@@ -176,6 +178,7 @@ onMounted(load);
               <el-dropdown-menu>
                 <el-dropdown-item command="docx">导出 Word（.docx）</el-dropdown-item>
                 <el-dropdown-item command="pptx">导出 PPT（.pptx）</el-dropdown-item>
+                <el-dropdown-item command="pdf">导出 PDF（.pdf）</el-dropdown-item>
               </el-dropdown-menu>
             </template>
           </el-dropdown>

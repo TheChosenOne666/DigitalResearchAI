@@ -3,11 +3,13 @@ import type { ConfigService } from '@nestjs/config';
 import type { SearchHit } from '../src/modules/search/connectors/connector.interface';
 import { MetricsService } from '../src/common/observability/metrics.service';
 
-/** generateText mock（可按用例覆写返回/抛错） */
+/** streamText mock（可按用例覆写返回/抛错；返回 { text: Promise<string> } 与真实 streamText 结构一致） */
 const genText = vi.hoisted(() => ({ impl: null as null | ((opts: unknown) => Promise<{ text: string }>) }));
 
 vi.mock('ai', () => ({
-  generateText: (opts: unknown) => (genText.impl ? genText.impl(opts) : Promise.resolve({ text: '' })),
+  streamText: (opts: unknown) => ({
+    text: genText.impl ? genText.impl(opts).then((r) => r.text) : Promise.resolve(''),
+  }),
 }));
 
 vi.mock('@ai-sdk/openai', () => ({

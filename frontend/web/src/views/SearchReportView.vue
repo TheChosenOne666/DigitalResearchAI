@@ -1,11 +1,11 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue';
+import { onMounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { ElMessage } from 'element-plus';
 import TopNav from '@/components/TopNav.vue';
 import MarkdownView from '@/components/MarkdownView.vue';
 import { fetchReportDetail, type ReportDetail } from '@/api/search';
-import { exportReport } from '@/api/workspace';
+import { exportReport, EXPORT_FORMAT_LABEL, type ExportFormat } from '@/api/workspace';
 
 const route = useRoute();
 const router = useRouter();
@@ -36,15 +36,15 @@ function onSourceClick(idx: number): void {
   activeCite.value = activeCite.value === idx ? null : idx;
 }
 
-/** 导出 Word/PPT（type=search，id 为 sessionId） */
+/** 导出 Word/PPT/PDF（type=search，id 为 sessionId） */
 const exporting = ref(false);
 
-async function onDownload(format: 'docx' | 'pptx'): Promise<void> {
+async function onDownload(format: ExportFormat): Promise<void> {
   if (!report.value || exporting.value) return;
   exporting.value = true;
   try {
     await exportReport('search', route.params.id as string, format);
-    ElMessage.success(`已导出 ${format === 'docx' ? 'Word' : 'PPT'} 文件`);
+    ElMessage.success(`已导出 ${EXPORT_FORMAT_LABEL[format]} 文件`);
   } catch (e) {
     ElMessage.error(e instanceof Error ? e.message : '导出失败');
   } finally {
@@ -56,10 +56,19 @@ function sourceTypeText(t: string): string {
   if (t === 'web') return '联网';
   if (t === 'vertical') return '垂直';
   if (t === 'kb') return '知识库';
+  if (t === 'upload') return '本地资料';
   return t;
 }
 
 onMounted(load);
+
+// 同组件复用（历史记录/我的报告间切换不同报告）时，按新 id 重新加载
+watch(
+  () => route.params.id,
+  () => {
+    if (route.name === 'search-report') load();
+  },
+);
 </script>
 
 <template>
@@ -78,7 +87,7 @@ onMounted(load);
             <svg class="ic" viewBox="0 0 24 24" fill="none"><path d="M19 12H5m0 0l6-6m-6 6l6 6" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" /></svg>
             返回我的报告
           </button>
-          <el-dropdown trigger="click" @command="(f: 'docx' | 'pptx') => onDownload(f)">
+          <el-dropdown trigger="click" @command="(f: ExportFormat) => onDownload(f)">
             <button class="btn primary">
               <svg class="ic" viewBox="0 0 24 24" fill="none"><path d="M12 3v12m0 0l-4-4m4 4l4-4M4 19h16" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" /></svg>
               导出文件
@@ -87,6 +96,7 @@ onMounted(load);
               <el-dropdown-menu>
                 <el-dropdown-item command="docx">导出 Word（.docx）</el-dropdown-item>
                 <el-dropdown-item command="pptx">导出 PPT（.pptx）</el-dropdown-item>
+                <el-dropdown-item command="pdf">导出 PDF（.pdf）</el-dropdown-item>
               </el-dropdown-menu>
             </template>
           </el-dropdown>

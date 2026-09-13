@@ -1,10 +1,10 @@
 <script setup lang="ts">
 import { computed, ref, onMounted, onBeforeUnmount, watch } from 'vue';
 import { useRouter, useRoute } from 'vue-router';
-import { ElMessage } from 'element-plus';
+import { ElMessage, ElMessageBox } from 'element-plus';
 import LoginDialog from '@/components/LoginDialog.vue';
 import { useSessionStore } from '@/stores/session';
-import { fetchHistories, type SessionListItem } from '@/api/search';
+import { clearHistories, fetchHistories, type SessionListItem } from '@/api/search';
 import { fetchMemberStatus, type MemberStatus } from '@/api/member';
 
 const router = useRouter();
@@ -70,11 +70,11 @@ function goVip(): void {
   router.push('/vip');
 }
 
-/** 切换历史下拉并懒加载 */
+/** 切换历史下拉（每次打开都重新拉取，保证新记录可见） */
 async function toggleHist(): Promise<void> {
   histOpen.value = !histOpen.value;
   userOpen.value = false;
-  if (histOpen.value && !histories.value.length && session.isLoggedIn) {
+  if (histOpen.value && session.isLoggedIn) {
     histLoading.value = true;
     try {
       const data = await fetchHistories(1, 30);
@@ -87,10 +87,36 @@ async function toggleHist(): Promise<void> {
   }
 }
 
-/** 点击历史条目 → 回首页按该问题重新检索 */
+/** 点击历史条目：有报告 → 报告详情页；待选择（有快照无报告）→ 回首页恢复选择态；其余（旧会话/中止失败）→ 重新检索 */
 function runHist(item: SessionListItem): void {
   histOpen.value = false;
-  router.push({ path: '/', query: { q: item.question } });
+  if (item.reportId) {
+    router.push(`/search/reports/${encodeURIComponent(item.id)}`);
+  } else if (item.status === 'pending_selection') {
+    router.push({ path: '/', query: { retrieval: item.id } });
+  } else {
+    router.push({ path: '/', query: { q: item.question } });
+  }
+}
+
+/** 清空历史：二次确认 → 后端级联删除全部会话/报告/来源 */
+async function onClearHistories(): Promise<void> {
+  try {
+    await ElMessageBox.confirm(
+      '清空后将删除全部历史会话及已生成的报告（含来源卡），且不可恢复。确定清空？',
+      '清空历史记录',
+      { type: 'warning', confirmButtonText: '清空', cancelButtonText: '取消' },
+    );
+  } catch {
+    return; // 用户取消
+  }
+  try {
+    const { deleted } = await clearHistories();
+    histories.value = [];
+    ElMessage.success(deleted > 0 ? `已清空 ${deleted} 条历史记录` : '历史记录已为空');
+  } catch (e) {
+    ElMessage.error(e instanceof Error ? e.message : '清空失败');
+  }
 }
 
 function toggleUser(): void {
@@ -170,7 +196,7 @@ watch(() => session.sessionId, () => loadMemberStatus());
               <div v-else>
                 <div class="hist-head">
                   <span>历史记录</span>
-                  <a @click="histories = []">清空</a>
+                  <a @click="onClearHistories">清空</a>
                 </div>
                 <div v-for="item in histories" :key="item.id" class="hist-item" @click="runHist(item)">
                   <div class="hist-q">{{ item.question }}</div>

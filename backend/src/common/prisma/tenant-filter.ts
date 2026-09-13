@@ -3,14 +3,18 @@
  * 对带 tenantId 的业务模型，在 ORM 层强制注入 tenant_id——应用代码无法漏带（ADR-2）。
  */
 
-/** 带租户隔离的业务模型（新增业务表时在此登记） */
+/** 带租户隔离的业务模型（新增业务表时在此登记；登记的前提是该表确有 tenant_id 列） */
 export const TENANT_MODELS = new Set<string>([
   'User',
   'AuditLog',
   'SearchSession',
+  'SearchRetrieval',
   'SearchReport',
+  'SearchReportSegment',
   'SearchSource',
   'SearchUsage',
+  'SearchUpload',
+  'SearchTask',
   'KbLibrary',
   'KbGroup',
   'KbDocument',

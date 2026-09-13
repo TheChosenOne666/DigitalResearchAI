@@ -21,6 +21,12 @@ const props = defineProps<{
   running: boolean;
   /** 错误信息（空串 = 无错误） */
   error: string;
+  /** 结构化错误明细（多条，逐行展示；为空时回落到 error 单条） */
+  errorDetails?: string[];
+  /** 是否可「继续生成」（生成失败且存在可续跑任务时为 true） */
+  canResume?: boolean;
+  /** 续跑请求进行中（禁用按钮防重复点击） */
+  resuming?: boolean;
   /** 报告 Markdown 文本（流式追加） */
   reportText: string;
   /** 当前高亮的引用角标 */
@@ -32,7 +38,47 @@ const props = defineProps<{
 const emit = defineEmits<{
   /** 点击正文角标 → 父组件联动来源卡高亮 */
   'cite-click': [idx: number];
+  /** 点击「继续生成」→ 父组件发起断点续跑 */
+  resume: [];
 }>();
+
+/** 技术痕迹清洗：兜底移除原始报错尾巴（Request id / status / JSON 错误体），避免泄漏给用户 */
+function sanitize(text: string): string {
+  return text
+    .replace(/\s*Request id:[\s\S]*$/i, '')
+    .replace(/\s*\|\s*status=\d+[\s\S]*$/i, '')
+    .replace(/\s*\|\s*\{[\s\S]*$/i, '')
+    .replace(/\s*status=\d+[\s\S]*$/i, '')
+    .trim();
+}
+
+/**
+ * 失败提示行（面向用户）：
+ * 1) 清洗技术痕迹；2) 合并「同一原因」的多章失败为一条，避免逐行重复；
+ * 3) 结构化明细优先，无则回落单条 error。
+ */
+const errorLines = computed<string[]>(() => {
+  const raw = (props.errorDetails ?? []).map((s) => sanitize(s.trim())).filter(Boolean);
+  const list = raw.length ? raw : props.error.trim() ? [sanitize(props.error.trim())] : [];
+
+  // 合并同因失败：把「本章「X」…」「本章「Y」…」按后缀原因归类
+  const grouped = new Map<string, string[]>();
+  for (const line of list) {
+    const m = /^本章「([^」]+)」(.+)$/.exec(line);
+    if (m) {
+      const [, heading, reason] = m;
+      const arr = grouped.get(reason) ?? [];
+      arr.push(heading);
+      grouped.set(reason, arr);
+    } else {
+      const arr = grouped.get(line) ?? [];
+      grouped.set(line, arr);
+    }
+  }
+  return [...grouped.entries()].map(([reason, headings]) =>
+    headings.length ? `${headings.join('、')}：${reason}` : reason,
+  );
+});
 
 /** 当前阶段序号；done 视为全部完成（返回 STAGES.length，使全部节点进入 done 态、无 active） */
 const stageIndex = computed(() =>
@@ -60,14 +106,23 @@ const isGenerating = computed(() => props.stage === 'generating' && props.runnin
       </template>
     </div>
 
-    <el-alert
-      v-if="error"
-      :title="error"
-      type="error"
-      show-icon
-      :closable="false"
-      class="err-alert"
-    />
+    <!-- 失败提示：逐条换行 + 内联「继续生成」重试入口（无需打开任务中心） -->
+    <div v-if="errorLines.length" class="err-box" role="alert">
+      <div class="err-main">
+        <i class="err-ic" aria-hidden="true">!</i>
+        <div class="err-lines">
+          <p v-for="(line, i) in errorLines" :key="i" class="err-line">{{ line }}</p>
+        </div>
+      </div>
+      <button
+        v-if="canResume"
+        class="err-resume"
+        :disabled="resuming"
+        @click="emit('resume')"
+      >
+        {{ resuming ? '继续生成中…' : '继续生成' }}
+      </button>
+    </div>
 
     <div class="report-body-wrap" v-loading="isGenerating">
       <MarkdownView
@@ -157,8 +212,79 @@ const isGenerating = computed(() => props.stage === 'generating' && props.runnin
   background: #2563eb;
 }
 
-.err-alert {
+/* ---- 失败提示（逐条换行 + 内联重试） ---- */
+
+.err-box {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
   margin-bottom: 16px;
+  padding: 12px 14px;
+  border: 1px solid #fecaca;
+  border-radius: 10px;
+  background: #fef2f2;
+}
+
+.err-main {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  flex: 1;
+  min-width: 0;
+}
+
+.err-ic {
+  flex: 0 0 auto;
+  display: grid;
+  width: 18px;
+  height: 18px;
+  margin-top: 1px;
+  place-items: center;
+  border-radius: 50%;
+  background: #dc2626;
+  color: #fff;
+  font-size: 12px;
+  font-style: normal;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.err-lines {
+  min-width: 0;
+}
+
+.err-line {
+  margin: 0;
+  color: #b91c1c;
+  font-size: 13px;
+  line-height: 1.7;
+  word-break: break-word;
+}
+
+.err-line + .err-line {
+  margin-top: 2px;
+}
+
+.err-resume {
+  flex: 0 0 auto;
+  height: 32px;
+  padding: 0 16px;
+  border: none;
+  border-radius: 8px;
+  background: linear-gradient(135deg, #2563eb, #1d4ed8);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.err-resume:hover:not(:disabled) {
+  filter: brightness(1.06);
+}
+
+.err-resume:disabled {
+  background: #93b4f5;
+  cursor: progress;
 }
 
 .report-body-wrap {

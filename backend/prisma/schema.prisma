@@ -148,37 +148,157 @@ model SearchSession {
   createdAt DateTime @default(now()) @map("created_at")
 
   reports SearchReport[]
+  /// 两段式重构：检索快照（选择态恢复用，每会话至多一条）
+  retrieval   SearchRetrieval?
 
   @@index([tenantId, createdAt])
   @@map("search_sessions")
+}
+
+/// 智搜检索快照（17 交互重构）：两段式第一段落库的精排后全量来源，
+/// 供「用户勾选 → 第二段生成」与「离开后恢复选择态」使用；30 分钟恢复窗口由应用层判定。
+model SearchRetrieval {
+  /// 主键
+  id        String   @id @default(cuid()) @db.VarChar(32)
+  /// 所属租户（行级隔离；由所属会话带入）
+  tenantId  String   @map("tenant_id") @db.VarChar(32)
+  /// 所属会话（一对一）
+  sessionId String   @unique @map("session_id") @db.VarChar(32)
+  /// 重写后的检索问题（生成阶段仍用 session.question 原始问题）
+  question  String   @db.VarChar(512)
+  /// 检索模式
+  mode      String   @db.VarChar(16)
+  /// 精排后的全量来源（含 idx/title/url/snippet/contentMd/sourceType/isCited），JSON
+  sources   Json
+  /// 创建时间（恢复窗口计时起点）
+  createdAt DateTime @default(now()) @map("created_at")
+
+  session SearchSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@map("search_retrievals")
+}
+
+/// 智搜补充上传的本地资料（18 智搜增强批 3）：
+/// 用户在智搜输入框「+」上传的文件，解析为文本后作为本次检索的额外来源参与报告生成；
+/// 仅本次会话可用（expiresAt 过期即不可再用），不自动进入知识库。
+model SearchUpload {
+  /// 主键
+  id        String   @id @default(cuid()) @db.VarChar(32)
+  /// 归属租户（行级隔离）
+  tenantId  String   @map("tenant_id") @db.VarChar(32)
+  /// 上传用户
+  userId    String   @map("user_id") @db.VarChar(32)
+  /// 原始文件名
+  name      String   @db.VarChar(512)
+  /// 文件类型（xlsx/csv/docx/pdf/txt/md，由扩展名推断）
+  mimeType  String   @map("mime_type") @db.VarChar(16)
+  /// 文件字节数
+  size      Int
+  /// 解析后的文本（Markdown/纯文本；超长已按上限截断）
+  contentMd String   @map("content_md") @db.Text
+  /// 过期时间（与检索快照恢复窗口一致，过期后不可再作为来源）
+  expiresAt DateTime @map("expires_at")
+  /// 创建时间
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([tenantId, userId])
+  @@index([expiresAt])
+  @@map("search_uploads")
 }
 
 /// 智搜报告版本（一个会话可有多版本，最新版参与展示）
 model SearchReport {
   /// 主键
   id             String   @id @default(cuid()) @db.VarChar(32)
+  /// 所属租户（行级隔离；由所属会话带入）
+  tenantId       String   @map("tenant_id") @db.VarChar(32)
   /// 所属会话
   sessionId      String   @map("session_id") @db.VarChar(32)
-  /// 报告正文（Markdown）
+  /// 报告正文（Markdown）：COMPLETE 为全文；DRAFT 为已完成章节的拼接（可续跑）
   contentMd      String   @map("content_md")
   /// 参数快照（问题/条件/路由/模型等），JSON
   paramsSnapshot Json?    @map("params_snapshot")
   /// token 用量
   tokenUsage     Int      @default(0) @map("token_usage")
+  /// 生成状态（18 批 4）：COMPLETE=已完成（参与展示/导出）；DRAFT=生成中或中断（可续跑）
+  status         String   @default("COMPLETE") @db.VarChar(16)
+  /// 已完成章节数（18 批 4 断点位置）：DRAFT 时表示下一章从该序号继续
+  segmentIdx     Int      @default(0) @map("segment_idx")
   /// 创建时间
   createdAt      DateTime @default(now()) @map("created_at")
 
-  session SearchSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  session  SearchSession        @relation(fields: [sessionId], references: [id], onDelete: Cascade)
   sources  SearchSource[]
+  segments SearchReportSegment[]
 
+  @@index([tenantId])
   @@index([sessionId])
   @@map("search_reports")
+}
+
+/// 报告章节（18 批 4 断点续跑载体）：按章节分段生成，逐章落库，
+/// 中断后从下一章继续，天然不会出现重复段落（对比「半截正文让 LLM 续写」）。
+model SearchReportSegment {
+  /// 主键
+  id        String   @id @default(cuid()) @db.VarChar(32)
+  /// 所属租户（行级隔离；由所属报告带入）
+  tenantId  String   @map("tenant_id") @db.VarChar(32)
+  /// 所属报告
+  reportId  String   @map("report_id") @db.VarChar(32)
+  /// 章节序号（0 起，对应 REPORT_SECTIONS）
+  idx       Int
+  /// 章节标题
+  heading   String   @db.VarChar(128)
+  /// 章节正文（Markdown）
+  contentMd String   @map("content_md") @db.Text
+  /// 创建时间
+  createdAt DateTime @default(now()) @map("created_at")
+
+  report SearchReport @relation(fields: [reportId], references: [id], onDelete: Cascade)
+
+  @@unique([reportId, idx])
+  @@index([tenantId])
+  @@map("search_report_segments")
+}
+
+/// 智搜任务（18 批 4 任务管控）：检索/生成任务的持久化状态，
+/// 供任务列表展示与「中断后继续生成」；跨刷新、跨设备可见。
+model SearchTask {
+  /// 主键
+  id         String    @id @default(cuid()) @db.VarChar(32)
+  /// 归属租户（行级隔离）
+  tenantId   String    @map("tenant_id") @db.VarChar(32)
+  /// 发起用户
+  userId     String    @map("user_id") @db.VarChar(32)
+  /// 关联会话
+  sessionId  String    @map("session_id") @db.VarChar(32)
+  /// 任务类型（retrieval=检索 / generate=生成）
+  type       String    @db.VarChar(16)
+  /// 状态：RETRIEVING/PENDING_SELECT/GENERATING/DONE/RETRIEVAL_FAILED/GENERATE_FAILED/ABORTED
+  status     String    @db.VarChar(24)
+  /// 进度（0-100；生成阶段按已完成章节折算）
+  progress   Int       @default(0)
+  /// 失败原因
+  errorMsg   String?   @map("error_msg") @db.VarChar(512)
+  /// 创建时间
+  createdAt  DateTime  @default(now()) @map("created_at")
+  /// 更新时间（用于判断僵尸任务）
+  updatedAt  DateTime  @updatedAt @map("updated_at")
+  /// 结束时间（DONE/FAILED/ABORTED）
+  finishedAt DateTime? @map("finished_at")
+
+  @@index([tenantId, userId, createdAt])
+  @@index([userId, status])
+  @@map("search_tasks")
 }
 
 /// 报告来源卡（引用级/参考级标记）
 model SearchSource {
   /// 主键
   id         String   @id @default(cuid()) @db.VarChar(32)
+  /// 所属租户（行级隔离；由所属报告带入）
+  tenantId   String   @map("tenant_id") @db.VarChar(32)
   /// 所属报告
   reportId   String   @map("report_id") @db.VarChar(32)
   /// 来源序号（前端角标 {c:N} 对应）
@@ -200,6 +320,7 @@ model SearchSource {
 
   report SearchReport @relation(fields: [reportId], references: [id], onDelete: Cascade)
 
+  @@index([tenantId])
   @@index([reportId])
   @@map("search_sources")
 }

@@ -28,7 +28,7 @@ export class EmbedService {
   constructor(config: ConfigService) {
     const cfg: EmbedConfig = {
       baseUrl: config.get<string>('ARK_BASE_URL') ?? 'https://ark.cn-beijing.volces.com/api/v3',
-      model: config.get<string>('EMBED_MODEL') ?? 'doubao-embedding-large',
+      model: config.get<string>('EMBED_MODEL') ?? 'doubao-embedding-large-text-250515',
       apiKey: config.get<string>('ARK_API_KEY') ?? '',
     };
     this.baseUrl = cfg.baseUrl!.replace(/\/+$/, '');

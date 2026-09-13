@@ -78,7 +78,10 @@ export const INDICATOR_OPTIONS: string[] = [
   '高等教育入学率',
 ];
 
-/** 来源卡类型徽标文案 */
+/** 来源卡类型徽标文案（upload = 18 批 3 用户补充上传的本地资料） */
 export function sourceTypeLabel(t: SseSource['sourceType']): string {
-  return t === 'vertical' ? '垂直数据' : t === 'web' ? '联网' : '知识库';
+  if (t === 'vertical') return '垂直数据';
+  if (t === 'web') return '联网';
+  if (t === 'upload') return '本地资料';
+  return '知识库';
 }

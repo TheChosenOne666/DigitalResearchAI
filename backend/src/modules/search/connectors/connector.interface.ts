@@ -6,8 +6,15 @@
 /** 检索模式（会话级路由偏好） */
 export type SearchMode = 'hybrid' | 'web' | 'local';
 
-/** 来源类型 */
-export type SourceType = 'web' | 'vertical' | 'local';
+/**
+ * 来源类型。
+ * `upload` = 用户补充上传的本地资料（18 批 3）：**不参与 RRF 融合排序**（不按相关度竞争），
+ * 由控制器在融合结果之上前置并入，保证「用户指定要用」的语义。
+ */
+export type SourceType = 'web' | 'vertical' | 'local' | 'upload';
+
+/** 连接器来源类型：不含 `upload`（上传资料由控制器直接并入结果，不经过连接器检索） */
+export type ConnectorSourceType = Exclude<SourceType, 'upload'>;
 
 /** 智搜抽取条件（意图分类产出或用户手动回填，手动优先） */
 export interface SearchConditions {
@@ -51,8 +58,8 @@ export interface ConnectorInput {
 
 /** 统一检索连接器接口 */
 export interface SearchConnector {
-  /** 该连接器负责的来源类型 */
-  readonly sourceType: SourceType;
+  /** 该连接器负责的来源类型（连接器不含 upload） */
+  readonly sourceType: ConnectorSourceType;
   /** 检索：返回命中列表（可空），单次失败不应抛错阻断整体 */
   search(input: ConnectorInput, signal: AbortSignal): Promise<SearchHit[]>;
 }

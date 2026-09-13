@@ -3,7 +3,7 @@ import type {
   ConnectorInput,
   SearchConnector,
   SearchHit,
-  SourceType,
+  ConnectorSourceType,
 } from './connector.interface';
 
 /** 世界银行 WDI API 基地址（免费、无需 Key） */
@@ -166,7 +166,7 @@ export function wdiToTableMarkdown(
  */
 @Injectable()
 export class VerticalWorldBankConnector implements SearchConnector {
-  readonly sourceType: SourceType = 'vertical';
+  readonly sourceType: ConnectorSourceType = 'vertical';
 
   async search(input: ConnectorInput, signal: AbortSignal): Promise<SearchHit[]> {
     const { conditions } = input;

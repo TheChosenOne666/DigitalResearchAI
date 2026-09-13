@@ -32,6 +32,7 @@ Thumbs.db
 
 # WorkBuddy 本地项目数据（记忆/状态，不入库）
 .workbuddy/
+.workbuddy-ai/
 
 # UI 设计原型目录（仅本地设计稿，不入库）
 AI数智研究平台原型/

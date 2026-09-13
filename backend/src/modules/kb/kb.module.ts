@@ -32,6 +32,15 @@ import { KbRetrieverService } from './retriever/kb.retriever.service';
     ChunkEmbedProcessor,
     KbRetrieverService,
   ],
-  exports: [KbStoreService, KbLearningStoreService, KbRetrievalStoreService, KbService, KbLearningService, KbRetrieverService],
+  // DocParserService 导出供智搜补充上传（18 批 3）复用文档解析能力
+  exports: [
+    KbStoreService,
+    KbLearningStoreService,
+    KbRetrievalStoreService,
+    KbService,
+    KbLearningService,
+    KbRetrieverService,
+    DocParserService,
+  ],
 })
 export class KbModule {}

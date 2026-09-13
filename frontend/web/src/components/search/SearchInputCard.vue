@@ -1,6 +1,7 @@
 <script setup lang="ts">
+import { ref } from 'vue';
 import { ElMessage } from 'element-plus';
-import type { SearchMode } from '@/api/search';
+import { uploadSearchFiles, type SearchMode, type SearchUploadItem } from '@/api/search';
 import type { SearchCondState } from './search-meta';
 import { COUNTRY_OPTIONS, INDICATOR_OPTIONS } from './search-meta';
 
@@ -19,6 +20,8 @@ const question = defineModel<string>('question', { required: true });
 const mode = defineModel<SearchMode>('mode', { required: true });
 const conditionsFilled = defineModel<boolean>('conditionsFilled', { required: true });
 const cond = defineModel<SearchCondState>('cond', { required: true });
+/** 18 批 3：本次检索附带的本地资料 id（上传成功后回填父组件） */
+const uploadIds = defineModel<string[]>('uploadIds', { required: true });
 
 const emit = defineEmits<{
   /** 发起检索（问题为空时此处拦截） */
@@ -39,9 +42,90 @@ function stopSearch(): void {
   emit('stop');
 }
 
-/** 「+」上传入口（M4 数据源接入实现，暂占位） */
+// ===== 18 批 3：本地资料上传（作为本次检索的额外来源，不自动入知识库）=====
+
+/** 单次累计最多文件数（与后端 MAX_UPLOAD_FILES 一致） */
+const MAX_FILES = 5;
+/** 单文件大小上限 MB（与后端 MAX_UPLOAD_BYTES 一致） */
+const MAX_UPLOAD_MB = 20;
+/** 允许的扩展名（与后端白名单一致） */
+const ACCEPT_EXT = '.xlsx,.xls,.csv,.docx,.doc,.pdf,.txt,.md';
+
+/** 已成功解析的资料（失败项只提示不入列） */
+const files = ref<SearchUploadItem[]>([]);
+const uploading = ref(false);
+const fileInput = ref<HTMLInputElement | null>(null);
+
+/** 「+」→ 打开文件选择 */
 function onUpload(): void {
-  ElMessage.info('外部数据上传（Excel/CSV）将在数据源接入中提供');
+  fileInput.value?.click();
+}
+
+/** 文件选择/拖拽统一入口：校验数量 → 上传解析 → 回填 uploadIds */
+async function addFiles(picked: File[]): Promise<void> {
+  if (!picked.length || uploading.value) return;
+  const remain = MAX_FILES - files.value.length;
+  if (remain <= 0) {
+    ElMessage.warning(`最多添加 ${MAX_FILES} 个文件`);
+    return;
+  }
+  if (picked.length > remain) {
+    ElMessage.warning(`最多 ${MAX_FILES} 个文件，已忽略多余的 ${picked.length - remain} 个`);
+  }
+  const candidate = picked.slice(0, remain);
+  // 大小预校验：避免把超限文件白传上去（后端仍会独立校验，此处只是省一次往返）
+  const limitBytes = MAX_UPLOAD_MB * 1024 * 1024;
+  const tooBig = candidate.filter((f) => f.size > limitBytes);
+  if (tooBig.length) {
+    ElMessage.error(`${tooBig.map((f) => f.name).join('、')} 超过 ${MAX_UPLOAD_MB}MB 上限，已跳过`);
+  }
+  const valid = candidate.filter((f) => f.size > 0 && f.size <= limitBytes);
+  if (!valid.length) return;
+  uploading.value = true;
+  try {
+    const results = await uploadSearchFiles(valid);
+    for (const r of results) {
+      if (r.status === 'parsed' && r.id) {
+        files.value.push(r);
+      } else {
+        ElMessage.error(`${r.name}：${r.error ?? '解析失败'}`);
+      }
+    }
+    uploadIds.value = files.value.map((f) => f.id!).filter(Boolean);
+    if (results.some((r) => r.status === 'parsed')) {
+      ElMessage.success(`已添加 ${results.filter((r) => r.status === 'parsed').length} 份本地资料，将作为本次检索的来源`);
+    }
+  } catch (e) {
+    ElMessage.error(e instanceof Error ? e.message : '上传失败');
+  } finally {
+    uploading.value = false;
+  }
+}
+
+/** 文件选择框变化 */
+function onFilesPicked(e: Event): void {
+  const input = e.target as HTMLInputElement;
+  void addFiles([...(input.files ?? [])]);
+  input.value = ''; // 允许重复选择同一文件
+}
+
+/** 拖拽放入 */
+function onDrop(e: DragEvent): void {
+  void addFiles([...(e.dataTransfer?.files ?? [])]);
+}
+
+/** 移除一份资料（同步回填 uploadIds） */
+function removeFile(id?: string): void {
+  if (!id) return;
+  files.value = files.value.filter((f) => f.id !== id);
+  uploadIds.value = files.value.map((f) => f.id!).filter(Boolean);
+}
+
+/** 人类可读的文件大小 */
+function sizeText(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
 /** 一键清空 4 项筛选条件 */
@@ -55,9 +139,26 @@ function resetCond(): void {
 </script>
 
 <template>
-  <section class="query-card">
+  <section class="query-card" @dragover.prevent @drop.prevent="onDrop">
     <div class="ss-box-row">
-      <button class="ss-plus" title="上传 / 接入外部数据（Excel、CSV）" @click="onUpload">+</button>
+      <button
+        class="ss-plus"
+        :class="{ busy: uploading }"
+        :disabled="uploading"
+        title="上传本地资料作为本次检索来源（Excel / CSV / Word / PDF / 文本；单次最多 5 个，单个 ≤ 20MB）"
+        @click="onUpload"
+      >
+        {{ uploading ? '…' : '+' }}
+      </button>
+      <!-- 18 批 3：本地资料文件选择（隐藏，由「+」触发；也支持拖拽到卡片） -->
+      <input
+        ref="fileInput"
+        class="ss-file"
+        type="file"
+        multiple
+        :accept="ACCEPT_EXT"
+        @change="onFilesPicked"
+      />
       <input
         class="ss-input"
         v-model="question"
@@ -75,6 +176,21 @@ function resetCond(): void {
         </svg>
         {{ running ? '停止' : '搜索' }}
       </button>
+    </div>
+
+    <!-- 18 批 3：已添加的本地资料（作为本次检索来源，与检索结果一并进入选择态） -->
+    <div v-if="files.length" class="ss-uploads">
+      <span class="ss-uploads-label">本地资料</span>
+      <span
+        v-for="f in files"
+        :key="f.id"
+        class="ss-up-chip"
+        :title="`${f.name} · ${sizeText(f.size)}`"
+      >
+        <span class="ss-up-name">{{ f.name }}</span>
+        <small class="ss-up-size">{{ sizeText(f.size) }}</small>
+        <button class="ss-up-x" title="移除该资料" @click="removeFile(f.id)">×</button>
+      </span>
     </div>
 
     <div class="ss-conds">
@@ -165,6 +281,71 @@ function resetCond(): void {
   display: flex;
   align-items: center;
   gap: 8px;
+}
+
+/* ===== 18 批 3：本地资料上传 ===== */
+.ss-file {
+  display: none;
+}
+
+.ss-plus.busy {
+  cursor: progress;
+  opacity: 0.7;
+}
+
+.ss-uploads {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 8px 2px 0;
+}
+
+.ss-uploads-label {
+  font-size: 12px;
+  color: #64748b;
+}
+
+.ss-up-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 280px;
+  padding: 2px 4px 2px 10px;
+  border: 1px solid #dbeafe;
+  border-radius: 999px;
+  background: #eff6ff;
+  color: #1d4ed8;
+  font-size: 12px;
+}
+
+.ss-up-name {
+  max-width: 170px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ss-up-size {
+  color: #64748b;
+  font-size: 11px;
+}
+
+.ss-up-x {
+  width: 16px;
+  height: 16px;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: #64748b;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.ss-up-x:hover {
+  background: #dbeafe;
+  color: #1d4ed8;
 }
 
 .ss-plus {

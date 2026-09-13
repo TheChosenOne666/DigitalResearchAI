@@ -5,7 +5,7 @@ import type {
   SearchConnector,
   SearchConditions,
   SearchHit,
-  SourceType,
+  ConnectorSourceType,
 } from './connector.interface';
 
 /** AnySearch 搜索基地址 */
@@ -71,7 +71,7 @@ export function parseAnySearchResponse(json: unknown): AnySearchResult[] {
  */
 @Injectable()
 export class WebAnySearchConnector implements SearchConnector {
-  readonly sourceType: SourceType = 'web';
+  readonly sourceType: ConnectorSourceType = 'web';
   private readonly logger = new Logger(WebAnySearchConnector.name);
   private readonly apiKey: string;
   private readonly baseUrl: string;
@@ -113,7 +113,7 @@ export class WebAnySearchConnector implements SearchConnector {
         url: r.url,
         snippet: r.snippet ?? '',
         contentMd: r.content ?? '',
-        sourceType: 'web' as SourceType,
+        sourceType: 'web' as ConnectorSourceType,
         meta: {
           siteName: r.siteName,
           ...(r.metadata ?? {}),

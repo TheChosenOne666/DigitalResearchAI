@@ -1,9 +1,26 @@
 import { describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import {
   needsTenantFilter,
   applyTenantFilter,
   TENANT_MODELS,
 } from '../src/common/prisma/tenant-filter';
+
+const BACKEND_DIR = dirname(fileURLToPath(import.meta.url)) + '/..';
+
+/** 解析 schema.prisma：模型名 → 是否声明了 tenantId 字段 */
+function schemaTenantIdFlags(): Map<string, boolean> {
+  const schema = readFileSync(resolve(BACKEND_DIR, 'prisma/schema.prisma'), 'utf8');
+  const flags = new Map<string, boolean>();
+  const re = /^model\s+(\w+)\s*\{([\s\S]*?)^\}/gm;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(schema)) !== null) {
+    flags.set(m[1], /^\s*tenantId\s/m.test(m[2]));
+  }
+  return flags;
+}
 
 describe('tenant-filter（租户强制注入纯函数）', () => {
   it('隔离清单内的模型 + 查询操作 → 需要注入', () => {
@@ -85,5 +102,21 @@ describe('TENANT_MODELS 隔离清单', () => {
   it('M1 模型已登记', () => {
     expect(TENANT_MODELS.has('User')).toBe(true);
     expect(TENANT_MODELS.has('AuditLog')).toBe(true);
+  });
+
+  it('智搜从表已登记：检索快照/报告/章节/来源（修复跨租户读取检索快照）', () => {
+    for (const model of ['SearchRetrieval', 'SearchReport', 'SearchReportSegment', 'SearchSource']) {
+      expect(TENANT_MODELS.has(model), `${model} 未登记`).toBe(true);
+      // 读路径必须注入（越权读取的修复点）；删除路径同样注入
+      expect(needsTenantFilter(model, 'findFirst')).toBe(true);
+      expect(needsTenantFilter(model, 'findMany')).toBe(true);
+      expect(needsTenantFilter(model, 'deleteMany')).toBe(true);
+    }
+  });
+
+  it('不变量：清单内每个模型在 schema 中都声明了 tenantId（防"登记了却没有列"）', () => {
+    const flags = schemaTenantIdFlags();
+    const missing = [...TENANT_MODELS].filter((m) => flags.get(m) !== true);
+    expect(missing, `以下模型已登记但 schema 无 tenantId：${missing.join(', ')}`).toEqual([]);
   });
 });

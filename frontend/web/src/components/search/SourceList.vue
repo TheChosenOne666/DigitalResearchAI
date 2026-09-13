@@ -18,6 +18,8 @@ const props = defineProps<{
   hasCond: boolean;
   /** 条件快照数据 */
   cond: SearchCondState;
+  /** 17 两段式：生成中禁用勾选（防止生成中途改动勾选集） */
+  disabled?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -32,6 +34,7 @@ const checkedCount = computed(() => props.checkedIdxs.size);
 
 /** 切换某条来源的勾选态 */
 function toggleCheck(idx: number): void {
+  if (props.disabled) return;
   emit('toggle-check', idx);
 }
 

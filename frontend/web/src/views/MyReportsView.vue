@@ -7,8 +7,10 @@ import {
   listMyReports,
   fetchReportVersions,
   exportReport,
+  EXPORT_FORMAT_LABEL,
   type MyReportItem,
   type ReportVersionItem,
+  type ExportFormat,
 } from '@/api/workspace';
 
 const router = useRouter();
@@ -54,15 +56,15 @@ function onView(item: MyReportItem): void {
   }
 }
 
-/** 下载（导出 Word/PPT，D1 两类报告都支持） */
+/** 下载（导出 Word/PPT/PDF，两类报告都支持） */
 const exporting = ref(false);
 
-async function onDownload(item: MyReportItem, format: 'docx' | 'pptx'): Promise<void> {
+async function onDownload(item: MyReportItem, format: ExportFormat): Promise<void> {
   if (exporting.value) return;
   exporting.value = true;
   try {
     await exportReport(item.type, item.id, format);
-    ElMessage.success(`已导出 ${format === 'docx' ? 'Word' : 'PPT'} 文件`);
+    ElMessage.success(`已导出 ${EXPORT_FORMAT_LABEL[format]} 文件`);
   } catch (e) {
     ElMessage.error(e instanceof Error ? e.message : '导出失败');
   } finally {
@@ -162,12 +164,13 @@ onMounted(load);
               </td>
               <td class="ops">
                 <a @click="onView(r)">浏览</a>
-                <el-dropdown trigger="click" @command="(f: 'docx' | 'pptx') => onDownload(r, f)">
+                <el-dropdown trigger="click" @command="(f: ExportFormat) => onDownload(r, f)">
                   <a>下载</a>
                   <template #dropdown>
                     <el-dropdown-menu>
                       <el-dropdown-item command="docx">导出 Word（.docx）</el-dropdown-item>
                       <el-dropdown-item command="pptx">导出 PPT（.pptx）</el-dropdown-item>
+                      <el-dropdown-item command="pdf">导出 PDF（.pdf）</el-dropdown-item>
                     </el-dropdown-menu>
                   </template>
                 </el-dropdown>

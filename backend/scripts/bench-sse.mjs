@@ -12,7 +12,7 @@
  * 用法：
  *   node scripts/bench-sse.mjs \
  *     --concurrency 10 --count 30 --question "美国2023年GDP" \
- *     --base http://localhost:3000 --timeout 60000 \
+ *     --base http://localhost:3000 --timeout 120000 \
  *     --phone 13800000000 --password admin123
  *
  * 环境变量兜底：BENCH_BASE / BENCH_PHONE / BENCH_PASSWORD
@@ -25,7 +25,7 @@ const args = parseArgs({
     count: { type: 'string', default: '30' },
     question: { type: 'string', default: '美国2023年GDP' },
     base: { type: 'string', default: process.env.BENCH_BASE ?? 'http://localhost:3000' },
-    timeout: { type: 'string', default: '60000' },
+    timeout: { type: 'string', default: '120000' },
     phone: { type: 'string', default: process.env.BENCH_PHONE ?? '13800000000' },
     password: { type: 'string', default: process.env.BENCH_PASSWORD ?? 'admin123' },
     help: { type: 'boolean', default: false },
@@ -156,6 +156,7 @@ async function main() {
   const dropped = results.filter((r) => r.error || !r.sawDone);
   const firsts = results.filter((r) => r.firstPacketMs != null).map((r) => r.firstPacketMs).sort((a, b) => a - b);
   const totals = results.map((r) => r.doneMs ?? r.firstPacketMs ?? 0).sort((a, b) => a - b);
+  const avgTotal = totals.length ? Math.round(totals.reduce((a, b) => a + b, 0) / totals.length) : 0;
   const fullStages = results.filter((r) => r.stages.length === 5).length;
 
   console.log('\n=== SSE 压测结果 ===');
@@ -164,7 +165,7 @@ async function main() {
   console.log(`断连/失败   : ${dropped.length} (${((dropped.length / results.length) * 100).toFixed(1)}%)`);
   console.log(`完整五阶段  : ${fullStages} (${((fullStages / results.length) * 100).toFixed(1)}%)`);
   console.log(`首包延迟 ms : P50=${fmt(pct(firsts, 50))} P95=${fmt(pct(firsts, 95))} P99=${fmt(pct(firsts, 99))}`);
-  console.log(`总耗时   ms : P50=${fmt(pct(totals, 50))} P95=${fmt(pct(totals, 95))} P99=${fmt(pct(totals, 99))}`);
+  console.log(`总耗时   ms : P50=${fmt(pct(totals, 50))} P95=${fmt(pct(totals, 95))} P99=${fmt(pct(totals, 99))} 平均=${avgTotal}`);
   console.log(`墙钟时间    : ${wall}ms (并发 ${CONCURRENCY})`);
 
   if (dropped.length > 0) {
