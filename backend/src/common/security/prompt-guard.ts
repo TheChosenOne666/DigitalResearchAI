@@ -88,6 +88,8 @@ const INJECTION_RULES: InjectionRule[] = [
 /** L1 归一化：Unicode 隐形字符（零宽/双向控制/连字/BOM） */
 const INVISIBLE_RE = /[\u200B-\u200F\u202A-\u202E\u2060\uFEFF]/g;
 /** L1 归一化：控制字符（保留换行 \n 与制表 \t） */
+// 命中控制字符码位是本清洗器的设计意图而非疏漏，故关闭 no-control-regex
+// eslint-disable-next-line no-control-regex
 const CONTROL_RE = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F]/g;
 
 /**
